@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+Cargo.lock
+.DS_Store
+*.swp
+sar_atlas_summary.csv
+sar_atlas_filtered.sdf
+*_2d.svg
+molecule_2d.svg
+sar_export.sdf

@@ -1,0 +1,20 @@
+[package]
+name = "sar-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Standalone 5-domain wgpu/egui desktop workbench, native ANSI terminal console, and Clap CLI for SAR-Atlas small-molecule cheminformatics."
+
+[[bin]]
+name = "sar-atlas"
+path = "src/main.rs"
+
+[dependencies]
+sar-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytemuck.workspace = true
+rayon.workspace = true
+clap.workspace = true
+eframe.workspace = true

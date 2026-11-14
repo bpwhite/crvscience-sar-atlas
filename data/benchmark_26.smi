@@ -1,0 +1,27 @@
+# SMILES	ID	NAME	TARGET	PACT	REF
+CCOc1cc2ncnc(Nc3cccc(Br)c3)c2cc1OCC	BRIDGES-56	Compound 56 (PD-DiEt)	EGFR	11.22	https://pubmed.ncbi.nlm.nih.gov/8568816/
+COc1cc2ncnc(Nc3cccc(Br)c3)c2cc1OC	CHEMBL29197	PD-153035	EGFR	10.60	https://pubmed.ncbi.nlm.nih.gov/8568816/
+CN(C)C\C=C\C(=O)Nc3cc1c(Nc(cc2Cl)ccc2F)ncnc1cc3OC4COCC4	CHEMBL1173655	Afatinib	EGFR	9.30	https://en.wikipedia.org/wiki/Afatinib
+COCCOc1cc2c(cc1OCCOC)ncnc2Nc3cccc(c3)C#C	CHEMBL553	Erlotinib	EGFR	8.70	https://en.wikipedia.org/wiki/Erlotinib
+COc1cc2ncnc(Nc3cccc(Cl)c3)c2cc1OC	NSC693255	AG-1478	EGFR	8.52	https://www.selleckchem.com/products/ag-1478-tyrphostin-ag-1478.html
+CS(=O)(=O)CCNCc1ccc(o1)c2ccc3c(c2)c(ncn3)Nc4ccc(c(c4)Cl)OCc5cccc(c5)F	CHEMBL554	Lapatinib	EGFR	7.99	https://en.wikipedia.org/wiki/Lapatinib
+C1COCCN1CCCOc2c(OC)cc3ncnc(c3c2)Nc4cc(Cl)c(F)cc4	CHEMBL939	Gefitinib	EGFR	7.43	https://en.wikipedia.org/wiki/Gefitinib
+CN1CCC(CC1)COc2cc3c(cc2OC)c(ncn3)Nc4ccc(cc4F)Br	CHEMBL24828	Vandetanib	EGFR	6.30	https://en.wikipedia.org/wiki/Vandetanib
+FC(F)(F)c2cc1N(c3c(Sc1cc2)cccc3)CCCN4CCN(CCO)CC4	CHEMBL726	Fluphenazine	Dopamine D2	9.10	https://en.wikipedia.org/wiki/Fluphenazine
+Clc2cc1N(c3c(Sc1cc2)cccc3)CCCN4CCN(CCO)CC4	CHEMBL567	Perphenazine	Dopamine D2	9.01	https://en.wikipedia.org/wiki/Perphenazine
+Cc1c(c(=O)n2c(n1)CCCC2)CCN3CCC(CC3)c4c5ccc(cc5on4)F	CHEMBL85	Risperidone	Dopamine D2	8.51	https://en.wikipedia.org/wiki/Risperidone
+c1cc(ccc1C(=O)CCCN2CCC(CC2)(c3ccc(cc3)Cl)O)F	CHEMBL54	Haloperidol	Dopamine D2	8.50	https://en.wikipedia.org/wiki/Haloperidol
+O=C1Cc2c(N1)cc(Cl)c(c2)CCN3CCN(CC3)c4nsc5ccccc45	CHEMBL708	Ziprasidone	Dopamine D2	8.26	https://en.wikipedia.org/wiki/Ziprasidone
+CN(C)CCCN1c2ccccc2Sc3ccc(Cl)cc13	DB00477	Chlorpromazine	Dopamine D2	8.19	https://psychopharmacopeia.com/aptable.php
+Clc2ccc1Oc4c(N=C(c1c2)N3CCNCC3)cccc4	CHEMBL1113	Amoxapine	Dopamine D2	7.68	https://en.wikipedia.org/wiki/Loxapine
+CN1CCN(CC1)C1=c2cc(C)sc2=Nc2ccccc2N1	DB00334	Olanzapine	Dopamine D2	7.63	https://psychopharmacopeia.com/aptable.php
+Clc2ccc1Oc4c(/N=C(\c1c2)N3CCN(C)CC3)cccc4	CHEMBL831	Loxapine	Dopamine D2	7.62	https://en.wikipedia.org/wiki/Loxapine
+CN1CCN(CC1)C2=Nc3cc(ccc3Nc4c2cccc4)Cl	CHEMBL42	Clozapine	Dopamine D2	6.89	https://en.wikipedia.org/wiki/Clozapine
+C1CN(CCN1CCOCCO)C2=NC3=CC=CC=C3SC4=CC=CC=C42	DB01224	Quetiapine	Dopamine D2	6.47	https://psychopharmacopeia.com/aptable.php
+O=C2OCC(=C2\c1ccccc1)\c3ccc(cc3)S(=O)(=O)C	CHEMBL122	Rofecoxib	COX-2	7.74	https://en.wikipedia.org/wiki/Rofecoxib
+c1cc(C)ccc1c2cc(C(F)(F)F)nn2c3ccc(cc3)S(=O)(=O)N	CHEMBL118	Celecoxib	COX-2	7.35	https://en.wikipedia.org/wiki/Celecoxib
+CC1=C(C(=NO1)C2=CC=CC=C2)C3=CC=C(C=C3)S(=O)(=O)N	CAS181695	Valdecoxib	COX-2	6.62	https://pubmed.ncbi.nlm.nih.gov/15494548/
+CC1=C(C2=C(N1C(=O)C3=CC=C(C=C3)Cl)C=CC(=C2)OC)CC(=O)O	DB00328	Indomethacin	COX-2	5.49	https://www.wikidata.org/wiki/Q409231
+O=C(\C=C\c1ccc(O)c(OC)c1)CC(=O)\C=C\c2cc(OC)c(O)cc2	PAINS-CUR	Curcumin	COX-2	5.21	https://en.wikipedia.org/wiki/Curcumin
+O=C(O)CN1C(=O)C(\SC1=S)=C/C(=C/c2ccccc2)C	CHEMBL56337	Epalrestat	Aldose Reductase	7.14	https://en.wikipedia.org/wiki/Epalrestat
+O=C1c3c(O/C(=C1/O)c2ccc(O)c(O)c2)cc(O)cc3O	PAINS-QUER	Quercetin	CYP3A4	4.64	https://en.wikipedia.org/wiki/Quercetin
