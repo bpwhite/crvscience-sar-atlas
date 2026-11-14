@@ -13,7 +13,7 @@ authors:
     affiliation: "CRV Science Network"
 preferred-citation:
   type: article
-  title: "SAR-Atlas: Multiparameter Medicinal Chemistry Optimization, Compartmental Oral PBPK, and Relative Binding Free-Energy Networks"
+  title: "SAR-Atlas: Drug Design, Body Distribution Modeling, and Candidate Screening in Rust"
   authors:
     - family-names: "White"
       given-names: "Bryan P."
