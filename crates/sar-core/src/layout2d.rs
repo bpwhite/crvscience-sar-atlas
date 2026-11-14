@@ -51,7 +51,10 @@ pub fn compute_2d_coords(mol: &mut Molecule) {
             .enumerate()
             .filter(|&(ri, r)| !placed_rings[ri] && r.iter().any(|&a| seen[a]))
             .max_by_key(|(_, r)| {
-                let shared: usize = r.iter().map(|&a| mol.atoms[a].ring_sizes.len()).sum();
+                let shared: usize = r
+                    .iter()
+                    .map(|&a| mol.rings.iter().filter(|other| other.contains(&a)).count())
+                    .sum();
                 if r.len() >= 10 { 500 + r.len() } else { (r.len() == 6) as usize * 100 + shared * 10 + r.len() }
             })
             .map(|(ri, _)| ri);
@@ -87,7 +90,7 @@ pub fn compute_2d_coords(mol: &mut Molecule) {
                 let placed_in_ring: Vec<usize> =
                     (0..ring.len()).filter(|&k| placed[ring[k]]).collect();
                 if placed_in_ring.len() >= 2 {
-                    fuse_ring_on_shared_edge(ring, &mut pos, &mut placed);
+                    fuse_ring_on_shared_edge(ring, &mol.rings, &mut pos, &mut placed);
                     placed_rings[ri] = true;
                     progress = true;
                 } else if placed_in_ring.len() == 1 {
@@ -199,7 +202,12 @@ fn place_regular_polygon(ring: &[usize], pos: &mut [[f32; 2]], placed: &mut [boo
     }
 }
 
-fn fuse_ring_on_shared_edge(ring: &[usize], pos: &mut [[f32; 2]], placed: &mut [bool]) {
+fn fuse_ring_on_shared_edge(
+    ring: &[usize],
+    all_rings: &[Vec<usize>],
+    pos: &mut [[f32; 2]],
+    placed: &mut [bool],
+) {
     let k = ring.len();
     let mut shared_edge = None;
     for idx in 0..k {
@@ -227,11 +235,27 @@ fn fuse_ring_on_shared_edge(ring: &[usize], pos: &mut [[f32; 2]], placed: &mut [
     let mut pcx = 0.0f32;
     let mut pcy = 0.0f32;
     let mut pcnt = 0usize;
-    for (ai, &is_p) in placed.iter().enumerate() {
-        if is_p && ai != u && ai != v {
-            pcx += pos[ai][0];
-            pcy += pos[ai][1];
-            pcnt += 1;
+    for other in all_rings {
+        if other.contains(&u)
+            && other.contains(&v)
+            && other.iter().any(|&ai| ai != u && ai != v && !ring.contains(&ai) && placed[ai])
+        {
+            for &ai in other {
+                if ai != u && ai != v && placed[ai] {
+                    pcx += pos[ai][0];
+                    pcy += pos[ai][1];
+                    pcnt += 1;
+                }
+            }
+        }
+    }
+    if pcnt == 0 {
+        for (ai, &is_p) in placed.iter().enumerate() {
+            if is_p && ai != u && ai != v {
+                pcx += pos[ai][0];
+                pcy += pos[ai][1];
+                pcnt += 1;
+            }
         }
     }
 

@@ -234,10 +234,13 @@ impl SculptMedalTier {
 }
 
 /// In-pocket `Drugit` medicinal chemistry R-group sprout warheads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SculptSproutWarhead {
+    #[serde(skip_deserializing)]
     pub code: &'static str,
+    #[serde(skip_deserializing)]
     pub label: &'static str,
+    #[serde(skip_deserializing)]
     pub smiles_branch: &'static str,
     pub bond_len_a: f32,
 }
@@ -300,6 +303,7 @@ pub struct SculptFlexibleSidechain {
     pub res_name: String,
     pub anchor_ca_pos: [f32; 3],
     pub rotamer_tips: [[f32; 3]; 4],
+    #[serde(skip_deserializing)]
     pub rotamer_labels: [&'static str; 4],
     pub rotamer_dunbrack_kcal: [f64; 4],
     pub active_rotamer: usize,
@@ -608,7 +612,7 @@ pub fn new_sculpt_session(
         m
     };
 
-    let placed = score_ligand_in_pocket(&mol, &pocket, None);
+    let placed = score_ligand_in_pocket(&mol, None, &pocket);
     let mut lig_coords = placed.aligned_ligand_coords3d;
     if lig_coords.len() < mol.atoms.len() {
         for a in mol.atoms.iter().skip(lig_coords.len()) {
@@ -1134,10 +1138,10 @@ pub fn recompute_sculpt_score(sess: &mut SculptSession) {
     }
 
     // 6. Drugit Multifactorial Med-Chem Penalties / Bonuses (`TPSA`, `cLogP`, `HBD`, `SAScore`, `PAINS`)
-    let phys = evaluate_physchem(&sess.mol);
+    let alerts = scan_structural_alerts(&sess.mol);
+    let phys = evaluate_physchem(&sess.mol, alerts.len());
     let sa = evaluate_synthetic_accessibility(&sess.mol).sa_score;
-    let pains_cnt = scan_structural_alerts(&sess.mol)
-        .alerts
+    let pains_cnt = alerts
         .iter()
         .filter(|a| a.family.eq_ignore_ascii_case("PAINS"))
         .count();

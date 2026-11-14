@@ -23,9 +23,12 @@ impl AlertSeverity {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StructuralAlertMatch {
+    #[serde(skip_deserializing)]
     pub code: &'static str,
+    #[serde(skip_deserializing)]
     pub family: &'static str,
     pub severity: AlertSeverity,
+    #[serde(skip_deserializing)]
     pub description: &'static str,
     pub atoms: Vec<usize>,
 }

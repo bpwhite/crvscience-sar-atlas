@@ -86,6 +86,7 @@ pub struct IonizableSite {
     /// Atom index in `Molecule::atoms` where formal `+1` or `-1` charge resides upon ionization.
     pub atom_idx: usize,
     pub kind: IonSiteKind,
+    #[serde(skip_deserializing)]
     pub moiety_name: &'static str,
     /// Intrinsic reference `pKa` before through-bond inductive attenuation.
     pub base_pka: f64,
@@ -120,6 +121,7 @@ pub struct ProtomerSpecies {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TautomerSpecies {
     pub rank: usize,
+    #[serde(skip_deserializing)]
     pub rule_name: &'static str,
     pub molvs_score: f64,
     /// Estimated free-energy offset relative to the canonical lowest-energy tautomer (`kcal/mol`, `298 K`).
@@ -285,7 +287,12 @@ fn through_bond_ewg_shift(
                 Element::I => 0.75,
                 Element::O => {
                     if a.in_ring && !a.aromatic {
-                        2.55 // Morpholine beta -O- drops R3N pKa from 10.15 -> 7.60 (Gefitinib!)
+                        // Saturated cyclic ether (`-O-` in morpholine sits at gamma distance d=3 where atten=0.42)
+                        if d == 3 {
+                            6.07
+                        } else {
+                            2.55
+                        }
                     } else if !is_carbonyl_oxygen(mol, v) && !is_sulfonyl_oxygen(mol, v) {
                         1.65 // Beta -OH / -OR ether
                     } else {
@@ -1221,14 +1228,15 @@ pub fn analyze_pka_and_protomers(mol: &Molecule, target_ph: f64) -> PkaProtomerR
         state_coulomb_pen[mask] = pen;
     }
 
+    let site_pkas: Vec<f64> = sites.iter().map(|s| s.micro_pka).collect();
     let eval_fractions_at = |ph: f64| -> Vec<f64> {
         let mut log_w = vec![0.0f64; num_states];
         let mut max_lw = f64::NEG_INFINITY;
         for mask in 0..num_states {
             let mut lw = -state_coulomb_pen[mask];
-            for (si, s) in sites.iter().enumerate() {
+            for (si, &micro_pka) in site_pkas.iter().enumerate() {
                 if ((mask >> si) & 1) == 1 {
-                    lw += s.micro_pka - ph;
+                    lw += micro_pka - ph;
                 }
             }
             log_w[mask] = lw;

@@ -175,6 +175,7 @@ pub struct SmartCypSite {
     pub score_2c9: f64,
     pub dominant_isoform: CypIsoform,
     /// Concrete medicinal-chemistry structural modification to block this soft spot.
+    #[serde(skip_deserializing)]
     pub blocking_strategy: &'static str,
 }
 
@@ -185,6 +186,7 @@ pub struct MetaboliteSpecies {
     pub metabolite_id: String,
     pub rank: usize,
     pub phase: MetabolismPhase,
+    #[serde(skip_deserializing)]
     pub enzyme: &'static str,
     pub reaction_name: String,
     pub parent_som_atom: Option<usize>,
@@ -195,6 +197,7 @@ pub struct MetaboliteSpecies {
     pub predicted_abundance_pct: f64,
     /// `true` for reactive epoxides, *ortho*/*para*-quinone-imine precursors, ketene/furan intermediates, or acyl glucuronides.
     pub is_reactive_bioactivation: bool,
+    #[serde(skip_deserializing)]
     pub bioactivation_note: &'static str,
     pub canonical_smiles: String,
     pub modified_atoms: Vec<usize>,
@@ -206,6 +209,7 @@ pub struct MetaboliteSpecies {
 pub struct MetabolicDatasetSummary {
     pub top_som_atom: Option<usize>,
     pub top_som_label: String,
+    #[serde(skip_deserializing)]
     pub top_reaction: &'static str,
     pub primary_isoform: CypIsoform,
     pub best_smartcyp_score: f64,

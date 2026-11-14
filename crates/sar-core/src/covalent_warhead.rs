@@ -138,8 +138,11 @@ impl ReactivityWindow {
 /// `GSH` half-life (`t_1/2`) and two-step `k_inact / K_I` inactivation kinetics.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DetectedWarhead {
+    #[serde(skip_deserializing)]
     pub warhead_code: &'static str,
+    #[serde(skip_deserializing)]
     pub warhead_name: &'static str,
+    #[serde(skip_deserializing)]
     pub mechanism: &'static str,
     pub target_residue: TargetResidue,
     pub reversibility: WarheadReversibility,
@@ -163,6 +166,7 @@ pub struct DetectedWarhead {
 pub struct CovalentDatasetSummary {
     pub has_warhead: bool,
     pub warhead_count: usize,
+    #[serde(skip_deserializing)]
     pub primary_warhead_name: &'static str,
     pub target_residue: TargetResidue,
     pub reversibility: WarheadReversibility,
@@ -176,8 +180,11 @@ pub struct CovalentDatasetSummary {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WarheadSwapCandidate {
     pub rank: usize,
+    #[serde(skip_deserializing)]
     pub template_code: &'static str,
+    #[serde(skip_deserializing)]
     pub template_name: &'static str,
+    #[serde(skip_deserializing)]
     pub clinical_precedent: &'static str,
     pub swap_mode_label: String,
     pub reversibility: WarheadReversibility,

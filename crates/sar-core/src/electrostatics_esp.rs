@@ -243,6 +243,7 @@ pub struct EspMultipoleDesign {
     pub rank: usize,
     pub design_id: String,
     pub modification_label: String,
+    #[serde(skip_deserializing)]
     pub mechanism: &'static str,
     pub target_partner: String,
     pub designed_smiles: String,
@@ -519,7 +520,7 @@ pub fn analyze_esp_with_prebuilt(
     enumerate_designs: bool,
 ) -> ElectrostaticsEspReport {
     let eps_int = cfg.interface_dielectric.clamp(1.5, 20.0);
-    let pocket_res = score_ligand_in_pocket(mol, pocket, None);
+    let pocket_res = score_ligand_in_pocket(mol, None, pocket);
     let lig_coords = pocket_res.aligned_ligand_coords3d.clone();
     let n_lig = mol.atoms.len().min(lig_coords.len());
 
@@ -759,7 +760,7 @@ pub fn analyze_esp_with_prebuilt(
         if matches!(pa.elem, Element::H) || dist3(pa.pos, pocket.center) > pocket.pocket_radius_a + 4.5 {
             continue;
         }
-        let q_rec = match (pa.res_name.as_str(), pa.atom_name.as_str()) {
+        let q_rec: f64 = match (pa.res_name.as_str(), pa.atom_name.as_str()) {
             ("ASP", "OD1" | "OD2") | ("GLU", "OE1" | "OE2") => -0.58,
             ("ARG", "NH1" | "NH2" | "NE") => 0.44,
             ("LYS", "NZ") => 0.72,
@@ -1322,10 +1323,10 @@ pub fn analyze_esp_with_prebuilt(
             if designs.iter().any(|d| d.designed_smiles == canon) {
                 continue;
             }
-            let phys = evaluate_physchem(&cmol);
+            let alerts = scan_structural_alerts(&cmol);
+            let phys = evaluate_physchem(&cmol, alerts.len());
             let sa = evaluate_synthetic_accessibility(&cmol).sa_score;
-            let pains_n = scan_structural_alerts(&cmol)
-                .alerts
+            let pains_n = alerts
                 .iter()
                 .filter(|a| a.family.eq_ignore_ascii_case("PAINS"))
                 .count();

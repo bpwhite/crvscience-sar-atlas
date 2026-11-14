@@ -95,3 +95,12 @@ cargo run --release -- dossier --profile oral-cns --top-n 3 --export-html cns_ca
 ## License
 
 Licensed under the [GNU General Public License v3.0 or later (`GPL-3.0-or-later`)](https://www.gnu.org/licenses/gpl-3.0.txt).
+
+## Citation & CRV Science Apps Hub
+
+- **CRV Science Apps Hub**: <https://crvscience.com/apps>
+- **Companion Preprint (`APP-PREPRINT-09`)**: [SAR-Atlas: Multiparameter Medicinal Chemistry Optimization, Compartmental Oral PBPK, and Relative Binding Free-Energy Networks](https://crvscience.com/apps/preprints/sar-atlas-multiparameter-pbpk-rbfe)
+- **Concept DOI**: [`10.5281/zenodo.24222390`](https://doi.org/10.5281/zenodo.24222390)
+- **Source Repository**: <https://github.com/bpwhite/crvscience-sar-atlas>
+
+See [`CITATION.cff`](CITATION.cff) for machine-readable BibTeX/CFF metadata and [`validation/README.md`](validation/README.md) for the headless validation benchmark outputs (`cargo test -p sar-core --test headless_validation`).

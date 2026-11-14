@@ -336,6 +336,7 @@ pub struct ParentLiabilityDiagnosis {
     /// Estimated baseline systemic oral bioavailability `F_oral` (`0..100%`).
     pub parent_f_oral_pct: f64,
     pub primary_bottleneck: String,
+    #[serde(skip_deserializing)]
     pub recommended_strategy: &'static str,
 }
 
@@ -374,13 +375,18 @@ pub struct EnzymaticActivationProfile {
     pub predicted_fa_pct: f64,
     pub predicted_active_f_oral_pct: f64,
     pub f_oral_fold_gain: f64,
+    #[serde(skip_deserializing)]
     pub released_byproduct: &'static str,
     pub byproduct_safety: ByproductSafetyTier,
     /// Time grid (`hours`, `0.0..=8.0`) and 3 concentration curves (`nM` for a `50 mg`-equivalent oral dose):
     /// `intact_prodrug_nm`, `released_active_nm`, and `direct_parent_oral_nm`.
+    #[serde(with = "crate::serde_f32_array")]
     pub time_hr: [f32; PRODRUG_TIME_GRID_LEN],
+    #[serde(with = "crate::serde_f32_array")]
     pub intact_prodrug_nm: [f32; PRODRUG_TIME_GRID_LEN],
+    #[serde(with = "crate::serde_f32_array")]
     pub released_active_nm: [f32; PRODRUG_TIME_GRID_LEN],
+    #[serde(with = "crate::serde_f32_array")]
     pub direct_parent_oral_nm: [f32; PRODRUG_TIME_GRID_LEN],
     pub active_cmax_nm: f64,
     pub active_tmax_hr: f64,
@@ -391,9 +397,12 @@ pub struct EnzymaticActivationProfile {
 pub struct ProdrugCandidate {
     pub rank: usize,
     pub candidate_id: String,
+    #[serde(skip_deserializing)]
     pub promoiety_code: &'static str,
+    #[serde(skip_deserializing)]
     pub promoiety_name: &'static str,
     pub family: PromoietyFamily,
+    #[serde(skip_deserializing)]
     pub clinical_precedent: &'static str,
     pub handle_label: String,
     pub handle_kind: ProdrugHandleKind,
@@ -853,6 +862,19 @@ fn estimate_ph68_solubility_ug_ml(
     (esol_ug_ml * hh_factor * extra_factor).clamp(0.05, 180_000.0)
 }
 
+/// Effective formal ionic burden at physiological pH 7.4 for passive membrane permeation:
+/// zwitterions carry opposing (+1 / -1) charges whose net sum is ~0 despite high `zwitterion_fraction_74`.
+fn effective_ionic_charge_74(pka: &crate::pka_protomer::PhysiologicalChargeSummary) -> f64 {
+    let total_ionic = pka.cation_fraction_74 + pka.anion_fraction_74 + 1.85 * pka.zwitterion_fraction_74;
+    if pka.charge_class == crate::pka_protomer::ChargeClass74::Zwitterionic
+        || pka.zwitterion_fraction_74 > 0.15
+    {
+        total_ionic.max(pka.mean_net_charge_74.abs())
+    } else {
+        pka.mean_net_charge_74.abs()
+    }
+}
+
 /// Estimates passive intestinal effective permeability score (`[0.03..0.98]`) from `TPSA`,
 /// `logD_7.4`, ionized net charge, `MW`, and `HBD`.
 fn estimate_passive_fa_fraction(
@@ -878,14 +900,19 @@ pub fn diagnose_parent_bcs_liability(mol: &Molecule) -> ParentLiabilityDiagnosis
     let admet = evaluate_admet(mol, &phys);
     let pka = evaluate_physiological_pka_74(mol);
 
-    let sol_ph68 = estimate_ph68_solubility_ug_ml(admet.esol_ug_ml, phys.clogp, pka.logd_74, 1.0);
+    let sol_ph68 = estimate_ph68_solubility_ug_ml(
+        admet.esol_ug_ml,
+        phys.clogp,
+        pka.microstate_logd_74,
+        1.0,
+    );
     // Dose number Do for a 100 mg oral dose in 250 mL fluid (= 400 ug/mL):
     let dose_num = (400.0 / sol_ph68.max(0.05)).clamp(0.002, 5000.0);
 
     let perm_frac = estimate_passive_fa_fraction(
         phys.mw,
-        pka.logd_74,
-        pka.net_charge_74.abs(),
+        pka.microstate_logd_74,
+        effective_ionic_charge_74(&pka),
         phys.tpsa,
         phys.hbd,
     );
@@ -935,14 +962,14 @@ pub fn diagnose_parent_bcs_liability(mol: &Molecule) -> ParentLiabilityDiagnosis
         BcsClass::ClassIII => (
             format!(
                 "Polar / ionized membrane barrier (TPSA {:.0} A^2, logD7.4 {:.2}, Q7.4 {:+.2})",
-                phys.tpsa, pka.logd_74, pka.net_charge_74
+                phys.tpsa, pka.microstate_logd_74, pka.mean_net_charge_74
             ),
             "Mask charge/polarity via Hepatic CES1 Alkyl Ester, Lipophilic Carbamate, Oxazolidinone, or hPEPT1 L-Valyl Carrier",
         ),
         BcsClass::ClassIV => (
             format!(
                 "Dual solubility ({:.1} ug/mL) & permeability (TPSA {:.0} A^2, Q7.4 {:+.2}) barrier",
-                sol_ph68, phys.tpsa, pka.net_charge_74
+                sol_ph68, phys.tpsa, pka.mean_net_charge_74
             ),
             "Use Amphiphilic Mofetil Ester, hPEPT1 L-Valinate Carrier, or ALP Phosphonooxymethyl Spacer",
         ),
@@ -968,8 +995,8 @@ pub fn diagnose_parent_bcs_liability(mol: &Molecule) -> ParentLiabilityDiagnosis
         bcs_class,
         mw: phys.mw,
         clogp: phys.clogp,
-        logd_74: pka.logd_74,
-        net_charge_74: pka.net_charge_74,
+        logd_74: pka.microstate_logd_74,
+        net_charge_74: pka.mean_net_charge_74,
         tpsa: phys.tpsa,
         sol_ph68_ug_ml: sol_ph68,
         dose_number_100mg: dose_num,
@@ -1415,12 +1442,15 @@ pub fn design_prodrugs(parent: &Molecule, handle_choice: usize) -> ProdrugDesign
     let active_handle_idx = handle_choice.min(handles.len() - 1);
     let handle = &handles[active_handle_idx];
 
+    let parent_alerts = scan_structural_alerts(&clean_parent);
+    let parent_phys = evaluate_physchem(&clean_parent, parent_alerts.len());
+    let parent_pka = evaluate_physiological_pka_74(&clean_parent);
     let parent_passive_perm = estimate_passive_fa_fraction(
         diagnosis.mw,
         diagnosis.logd_74,
-        diagnosis.net_charge_74.abs(),
+        effective_ionic_charge_74(&parent_pka),
         diagnosis.tpsa,
-        0,
+        parent_phys.hbd,
     );
 
     let mut candidates = Vec::new();
@@ -1445,7 +1475,7 @@ pub fn design_prodrugs(parent: &Molecule, handle_choice: usize) -> ProdrugDesign
         let pd_sol = estimate_ph68_solubility_ug_ml(
             admet.esol_ug_ml,
             phys.clogp,
-            pka.logd_74,
+            pka.microstate_logd_74,
             spec.extra_ph68_ionization_sol_factor,
         );
         let sol_fold = (pd_sol / diagnosis.sol_ph68_ug_ml.max(0.05)).clamp(0.01, 50_000.0);
@@ -1459,8 +1489,8 @@ pub fn design_prodrugs(parent: &Molecule, handle_choice: usize) -> ProdrugDesign
         // 2. Prodrug effective intestinal flux (passive OR brush-border ALP supersaturation OR hPEPT1):
         let pd_passive = estimate_passive_fa_fraction(
             phys.mw,
-            pka.logd_74,
-            pka.net_charge_74.abs(),
+            pka.microstate_logd_74,
+            effective_ionic_charge_74(&pka),
             phys.tpsa,
             phys.hbd,
         );
@@ -1589,8 +1619,8 @@ pub fn design_prodrugs(parent: &Molecule, handle_choice: usize) -> ProdrugDesign
                 active_tmax_hr: tmax,
             },
             physchem: phys,
-            logd_74: pka.logd_74,
-            net_charge_74: pka.net_charge_74,
+            logd_74: pka.microstate_logd_74,
+            net_charge_74: pka.mean_net_charge_74,
             boiled_egg: admet.boiled_egg,
             sa_score: sa.sa_score,
             prodrug_score,
@@ -1717,7 +1747,7 @@ pub fn format_prodrugs_sdf(cands: &[ProdrugCandidate]) -> String {
             ("RELEASED_BYPRODUCT", ac.released_byproduct.to_string()),
             ("PRODRUG_SCORE", format!("{:.1}", c.prodrug_score)),
         ];
-        let mut rec = format_sdf_record(&c.mol, &c.physchem);
+        let mut rec = format_sdf_record(&c.mol);
         if let Some(pos) = rec.rfind("$$$$") {
             let mut block = String::new();
             for (k, v) in &tags {

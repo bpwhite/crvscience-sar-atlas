@@ -1,0 +1,166 @@
+{
+  "concept_doi": "10.5281/zenodo.24222390",
+  "preprint_id": "APP-PREPRINT-09",
+  "preprint_url": "https://crvscience.com/apps/preprints/sar-atlas-multiparameter-pbpk-rbfe",
+  "repo": "crvscience-sar-atlas",
+  "schema_version": "1.0",
+  "tests": {
+    "t1_cns_mpo_qed_lipinski_and_mmp_cliffs": {
+      "dataset_molecules": 26,
+      "engine_calls": [
+        "DatasetAnalysis::from_molecules",
+        "load_benchmark_26"
+      ],
+      "max_mmp_abs_delta_pact": 2.08,
+      "max_sali": 8.628288269042969,
+      "mean_cns_mpo": 4.873152427693005,
+      "mean_qed": 0.7153102335445622,
+      "mmp_pair_count": 12,
+      "pareto_lead_count": 11,
+      "pareto_lead_names": [
+        "Compound 56 (PD-DiEt)",
+        "PD-153035",
+        "Erlotinib",
+        "AG-1478",
+        "Perphenazine",
+        "Haloperidol",
+        "Chlorpromazine",
+        "Amoxapine",
+        "Olanzapine",
+        "Rofecoxib",
+        "Epalrestat"
+      ],
+      "ro5_zero_violation_count": 25,
+      "sali_cliff_edge_count": 5,
+      "veber_pass_count": 26
+    },
+    "t2_rk4_oral_pbpk_and_brain_kpuu": {
+      "csv_artifact": "validation/pbpk_plasma_profile.csv",
+      "csv_bytes": 14072,
+      "dose_mg": 50.0,
+      "engine_calls": [
+        "simulate_oral_pbpk",
+        "export_pbpk_timecourse_csv"
+      ],
+      "haloperidol": {
+        "auc_total_plasma_0_24_nm_hr": 2003.1765396595001,
+        "auc_unbound_brain_nm_hr": 132.39931504397785,
+        "auc_unbound_plasma_nm_hr": 144.13811591057745,
+        "cl_hepatic_blood_l_hr": 8.336446414109652,
+        "cl_renal_plasma_l_hr": 0.14674418653497992,
+        "cmax_total_plasma_nm": 222.90483613986237,
+        "cmax_unbound_brain_nm": 14.709157243762201,
+        "cmax_unbound_plasma_nm": 16.03710677465034,
+        "compound_id": "CHEMBL54",
+        "f_oral_pct": 29.138062293773814,
+        "fa_integrated": 0.5389971394339936,
+        "fg_gut_wall": 0.5957834600044966,
+        "fh_hepatic": 0.9073728176210039,
+        "hepatic_extraction_eh": 0.09262718237899613,
+        "kp_uu_brain": 0.9225739221101329,
+        "peak_ro_brain_pct": 82.40813301649105,
+        "terminal_t_half_hr": 33.73232112003147,
+        "tmax_plasma_hr": 2.24,
+        "vss_l_per_kg": 5.509859292365798
+      },
+      "lapatinib": {
+        "auc_total_plasma_0_24_nm_hr": 29.05571971088648,
+        "auc_unbound_brain_nm_hr": 0.14596843272341245,
+        "auc_unbound_plasma_nm_hr": 2.379744192696061,
+        "cl_hepatic_blood_l_hr": 12.126572789172581,
+        "cl_renal_plasma_l_hr": 0.16214983248021006,
+        "cmax_total_plasma_nm": 3.0973259721910713,
+        "cmax_unbound_brain_nm": 0.015439055759583419,
+        "cmax_unbound_plasma_nm": 0.25365196339766977,
+        "compound_id": "CHEMBL554",
+        "f_oral_pct": 0.6938703521285813,
+        "fa_integrated": 0.08658642991964692,
+        "fg_gut_wall": 0.09261508268981071,
+        "fh_hepatic": 0.8652603023425269,
+        "hepatic_extraction_eh": 0.13473969765747312,
+        "kp_uu_brain": 0.0617476996197494,
+        "peak_ro_brain_pct": 0.15113452956169027,
+        "terminal_t_half_hr": 16.99046840585992,
+        "tmax_plasma_hr": 2.5,
+        "vss_l_per_kg": 4.344079011867989
+      }
+    },
+    "t3_lomap_rbfe_closure_and_active_learning": {
+      "active_learning_batch_mean_epistemic_std": 1.6701356837549333,
+      "active_learning_batch_mean_pairwise_dissim": 0.4449117951922946,
+      "active_learning_batch_mean_predicted_pact": 9.314632466521177,
+      "active_learning_pool_size": 70,
+      "active_learning_selected_batch_count": 10,
+      "active_learning_top5_candidates": [
+        {
+          "candidate_id": "BIO-2-01",
+          "candidate_name": "PD-153035 (ome_to_oet)",
+          "epistemic_std": 1.5586879412984103,
+          "expected_improvement": 0.19000478676800098,
+          "predicted_pact": 10.035439462710455,
+          "rank": 1,
+          "selected_in_batch": true,
+          "ucb_score": 12.37347137465807
+        },
+        {
+          "candidate_id": "BIO-1-04",
+          "candidate_name": "Compound 56 (PD-DiEt) (aryl_fluorination)",
+          "epistemic_std": 1.914403414929379,
+          "expected_improvement": 0.1693056265769457,
+          "predicted_pact": 9.4159391622014,
+          "rank": 2,
+          "selected_in_batch": true,
+          "ucb_score": 12.28754428459547
+        },
+        {
+          "candidate_id": "BIO-2-08",
+          "candidate_name": "PD-153035 (ome_to_ochf2)",
+          "epistemic_std": 1.7786164035314151,
+          "expected_improvement": 0.13529315902998823,
+          "predicted_pact": 9.407123077458118,
+          "rank": 3,
+          "selected_in_batch": true,
+          "ucb_score": 12.07504768275524
+        },
+        {
+          "candidate_id": "BIO-2-02",
+          "candidate_name": "PD-153035 (phenyl_aza_scan)",
+          "epistemic_std": 1.7957874798970648,
+          "expected_improvement": 0.10843114585446162,
+          "predicted_pact": 9.17982523820335,
+          "rank": 4,
+          "selected_in_batch": true,
+          "ucb_score": 11.873506458048947
+        },
+        {
+          "candidate_id": "BIO-1-01",
+          "candidate_name": "Compound 56 (PD-DiEt) (phenyl_aza_scan)",
+          "epistemic_std": 1.7000331243870945,
+          "expected_improvement": 0.1105722897508688,
+          "predicted_pact": 9.354143374352127,
+          "rank": 5,
+          "selected_in_batch": true,
+          "ucb_score": 11.90419306093277
+        }
+      ],
+      "engine_calls": [
+        "run_rbfe_network_campaign",
+        "run_active_learning_campaign"
+      ],
+      "rbfe_dg_rmse_kcal": 0.99444985214191,
+      "rbfe_kendall_tau": 0.45454545454545453,
+      "rbfe_max_cycle_hysteresis_kcal": 2.026419530531057,
+      "rbfe_mean_cycle_hysteresis_kcal": 1.0101374086716353,
+      "rbfe_mean_lomap_score": 0.37201148221179386,
+      "rbfe_n_cycles": 6,
+      "rbfe_n_edges": 15,
+      "rbfe_n_nodes": 11,
+      "rbfe_pact_r2_pearson": 0.5823793913701385,
+      "rbfe_post_mle_max_cycle_error_kcal": 0.0,
+      "rbfe_resolved_target": "Dopamine D2"
+    }
+  },
+  "testsPassed": 3,
+  "testsTotal": 3,
+  "version": "3.8.0"
+}

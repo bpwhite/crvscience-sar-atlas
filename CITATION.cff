@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use CRV Science SAR-Atlas in academic research, please cite the software and associated CRV Science Apps preprint below."
+type: software
+title: "SAR-Atlas: Multiparameter Medicinal Chemistry Optimization, Compartmental Oral PBPK, and Relative Binding Free-Energy Networks"
+version: "3.8.0"
+license: "GPL-3.0-or-later"
+repository-code: "https://github.com/bpwhite/crvscience-sar-atlas"
+url: "https://crvscience.com/apps"
+doi: "10.5281/zenodo.24222390"
+authors:
+  - family-names: "White"
+    given-names: "Bryan P."
+    affiliation: "CRV Science Network"
+preferred-citation:
+  type: article
+  title: "SAR-Atlas: Multiparameter Medicinal Chemistry Optimization, Compartmental Oral PBPK, and Relative Binding Free-Energy Networks"
+  authors:
+    - family-names: "White"
+      given-names: "Bryan P."
+      affiliation: "CRV Science Network"
+  doi: "10.5281/zenodo.24222390"
+  url: "https://crvscience.com/apps/preprints/sar-atlas-multiparameter-pbpk-rbfe"
+  journal: "CRV Science Apps Preprint Series (APP-PREPRINT-09)"
+  year: 2026

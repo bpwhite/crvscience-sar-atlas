@@ -247,6 +247,7 @@ pub struct EvolvedCandidate {
     pub logd_74: f64,
     pub esol_ug_ml: f64,
     pub boiled_egg: BoiledEggRegion,
+    #[serde(skip_deserializing)]
     pub shape3d_class: &'static str,
 
     /// Multi-objective evolutionary desirability fitness (`[0..100]`).
@@ -1014,8 +1015,8 @@ fn extract_crossover_synthons(mol: &Molecule) -> Vec<(Molecule, usize, Option<&'
             continue;
         }
 
-        let env_a = classify_brics_atom_env(mol, b.a, b.b);
-        let env_b = classify_brics_atom_env(mol, b.b, b.a);
+        let env_a = classify_brics_atom_env(mol, b.a, b.b, b);
+        let env_b = classify_brics_atom_env(mol, b.b, b.a, b);
 
         for (piece, anchor, env_tag) in [(&side_a, b.a, env_a), (&side_b, b.b, env_b)] {
             if piece.len() > 28 {

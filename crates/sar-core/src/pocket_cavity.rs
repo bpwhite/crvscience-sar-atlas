@@ -196,6 +196,7 @@ pub struct PocketResidueSummary {
     pub res_name: String,
     pub chain_id: char,
     pub res_seq: i32,
+    #[serde(skip_deserializing)]
     pub role: &'static str,
     pub min_dist_to_center_a: f32,
     pub contact_atom_count: usize,
@@ -229,6 +230,7 @@ pub struct ReceptorPharmacophorePoint {
     pub pos: [f32; 3],
     pub tolerance_radius_a: f32,
     pub receptor_origin: String,
+    #[serde(skip_deserializing)]
     pub interaction_label: &'static str,
     /// Thermodynamic priority weight (`1.0 .. 2.5`).
     pub weight: f64,
@@ -263,6 +265,7 @@ pub struct PocketCavityAnalysis {
 /// Specific receptor–ligand non-covalent contact or displaced water identified in the aligned 3D pose.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PocketLigandInteraction {
+    #[serde(skip_deserializing)]
     pub kind_label: &'static str,
     pub receptor_partner: String,
     pub ligand_atom_label: String,
@@ -1111,6 +1114,38 @@ fn project_toward_cavity(atom_pos: [f32; 3], center: [f32; 3], dist_a: f32) -> [
     ]
 }
 
+fn project_to_open_cavity(
+    atom_pos: [f32; 3],
+    center: [f32; 3],
+    dist_a: f32,
+    shell: &[PdbAtom],
+    voxels: &[([f32; 3], usize)],
+) -> [f32; 3] {
+    let ray_pt = project_toward_cavity(atom_pos, center, dist_a);
+    let ray_ok = !shell.iter().any(|sa| dist3(ray_pt, sa.pos) < 1.85);
+    if ray_ok || voxels.is_empty() {
+        return ray_pt;
+    }
+
+    let min_r = (dist_a - 1.15).max(1.90);
+    let max_r = dist_a + 1.45;
+    let mut best_pt: Option<([f32; 3], f32)> = None;
+    for &(vx, _) in voxels {
+        let d_atom = dist3(vx, atom_pos);
+        if d_atom < min_r || d_atom > max_r {
+            continue;
+        }
+        if shell.iter().any(|sa| dist3(vx, sa.pos) < 1.85) {
+            continue;
+        }
+        let score = (d_atom - dist_a).abs() + 0.35 * dist3(vx, ray_pt);
+        if best_pt.map(|(_, s)| score < s).unwrap_or(true) {
+            best_pt = Some((vx, score));
+        }
+    }
+    best_pt.map(|(p, _)| p).unwrap_or(ray_pt)
+}
+
 fn extract_receptor_pharmacophores(
     center: [f32; 3],
     radius: f32,
@@ -1128,7 +1163,7 @@ fn extract_receptor_pharmacophores(
         let origin = format!("{}{} {}", pa.res_name, pa.res_seq, pa.atom_name);
 
         if is_protein_anionic(pa) {
-            let proj = project_toward_cavity(pa.pos, center, 2.85);
+            let proj = project_to_open_cavity(pa.pos, center, 2.85, shell, voxels);
             raw_pts.push(ReceptorPharmacophorePoint {
                 feature_id: String::new(),
                 kind: RocsColorKind::Cation,
@@ -1139,7 +1174,7 @@ fn extract_receptor_pharmacophores(
                 weight: 2.2,
             });
         } else if is_protein_cationic(pa) {
-            let proj = project_toward_cavity(pa.pos, center, 2.90);
+            let proj = project_to_open_cavity(pa.pos, center, 2.90, shell, voxels);
             raw_pts.push(ReceptorPharmacophorePoint {
                 feature_id: String::new(),
                 kind: RocsColorKind::Anion,
@@ -1150,7 +1185,7 @@ fn extract_receptor_pharmacophores(
                 weight: 2.0,
             });
         } else if is_protein_polar_donor(pa) {
-            let proj = project_toward_cavity(pa.pos, center, 2.85);
+            let proj = project_to_open_cavity(pa.pos, center, 2.85, shell, voxels);
             raw_pts.push(ReceptorPharmacophorePoint {
                 feature_id: String::new(),
                 kind: RocsColorKind::HBondAcceptor,
@@ -1161,7 +1196,7 @@ fn extract_receptor_pharmacophores(
                 weight: if pa.atom_name == "N" { 2.1 } else { 1.6 }, // Hinge backbone N-H prioritized!
             });
         } else if is_protein_polar_acceptor(pa) {
-            let proj = project_toward_cavity(pa.pos, center, 2.85);
+            let proj = project_to_open_cavity(pa.pos, center, 2.85, shell, voxels);
             raw_pts.push(ReceptorPharmacophorePoint {
                 feature_id: String::new(),
                 kind: RocsColorKind::HBondDonor,
@@ -1174,7 +1209,7 @@ fn extract_receptor_pharmacophores(
         } else if matches!(pa.res_name.as_str(), "PHE" | "TRP" | "TYR" | "HIS")
             && matches!(pa.atom_name.as_str(), "CZ" | "CE2" | "CG")
         {
-            let proj = project_toward_cavity(pa.pos, center, 3.60);
+            let proj = project_to_open_cavity(pa.pos, center, 3.60, shell, voxels);
             raw_pts.push(ReceptorPharmacophorePoint {
                 feature_id: String::new(),
                 kind: RocsColorKind::AromaticRing,
@@ -1204,7 +1239,7 @@ fn extract_receptor_pharmacophores(
                 });
             }
             WaterThermodynamicRole::ConservedStructuralBridge => {
-                let proj = project_toward_cavity(w.pos, center, 2.75);
+                let proj = project_to_open_cavity(w.pos, center, 2.75, shell, voxels);
                 raw_pts.push(ReceptorPharmacophorePoint {
                     feature_id: String::new(),
                     kind: RocsColorKind::HBondAcceptor,
@@ -1219,16 +1254,29 @@ fn extract_receptor_pharmacophores(
         }
     }
 
-    // Add deepest buried hydrophobic cavity centroid if fewer than 2 hydrophobic spheres exist
+    // Add deepest buried hydrophobic cavity voxel if fewer than 2 hydrophobic spheres exist
     let hyd_cnt = raw_pts
         .iter()
         .filter(|p| p.kind == RocsColorKind::Hydrophobic)
         .count();
     if hyd_cnt < 2 && !voxels.is_empty() {
+        let core_pos = if !shell.iter().any(|sa| dist3(center, sa.pos) < 1.85) {
+            center
+        } else {
+            voxels
+                .iter()
+                .filter(|&&(vx, _)| !shell.iter().any(|sa| dist3(vx, sa.pos) < 1.85))
+                .min_by(|a, b| {
+                    b.1.cmp(&a.1)
+                        .then_with(|| dist3(a.0, center).total_cmp(&dist3(b.0, center)))
+                })
+                .map(|&(vx, _)| vx)
+                .unwrap_or(center)
+        };
         raw_pts.push(ReceptorPharmacophorePoint {
             feature_id: String::new(),
             kind: RocsColorKind::Hydrophobic,
-            pos: center,
+            pos: core_pos,
             tolerance_radius_a: 1.9,
             receptor_origin: "Buried Lipophilic Core".to_string(),
             interaction_label: "Core Hydrophobic Subpocket",

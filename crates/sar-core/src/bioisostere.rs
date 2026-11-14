@@ -20,8 +20,10 @@ use std::collections::BTreeSet;
 /// A single de novo bioisosteric or late-stage analog generated from a parent lead molecule.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BioisostereAnalog {
+    #[serde(skip_deserializing)]
     pub rule_code: &'static str,
     pub rule_name: String,
+    #[serde(skip_deserializing)]
     pub tactical_rationale: &'static str,
     pub mol: Molecule,
     pub canonical_smiles: String,

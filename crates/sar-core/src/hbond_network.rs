@@ -269,6 +269,7 @@ pub struct HBondNetworkReport {
     pub compound_name: String,
     pub canonical_smiles: String,
     pub selected_ligand_state_label: String,
+    #[serde(skip_deserializing)]
     pub solver_method: &'static str,
     pub states_evaluated: usize,
 
@@ -1583,13 +1584,14 @@ fn solve_global_hbn_assignment(
         }
     }
 
+    let node_mode_lens: Vec<usize> = nodes.iter().map(|n| n.modes.len()).collect();
     let eval_assignment = |assign: &[usize]| -> f64 {
         let mut tot = 0.0f64;
         for (i, &si) in assign.iter().enumerate() {
             tot += unary[i][si];
         }
         for (&(i, j), tab) in &pair_tables {
-            let nj = nodes[j].modes.len();
+            let nj = node_mode_lens[j];
             tot += tab[assign[i] * nj + assign[j]];
         }
         tot
@@ -1883,7 +1885,8 @@ pub fn optimize_hbond_network_with_prebuilt(
     target_name: &str,
     compute_ph_curve: bool,
 ) -> HBondNetworkReport {
-    let base_pock_score = score_ligand_in_pocket(mol, ds, pocket);
+    let mol_idx = ds.and_then(|d| d.mols.iter().position(|dm| dm.id == mol.id));
+    let base_pock_score = score_ligand_in_pocket(mol, mol_idx, pocket);
     let lig_coords = base_pock_score.aligned_ligand_coords3d.clone();
     let eval_ph = cfg.target_ph.clamp(4.0, 10.0);
 

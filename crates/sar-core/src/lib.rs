@@ -169,7 +169,7 @@ pub use public_pdb_fetch::{
 pub use foldit_sculpt::{
     add_rubber_band_to_receptor, auto_band_polar_contacts, curated_vhl_5nvx_pdb_text,
     drag_tug_atom_step, export_sculpt_trajectory_csv, format_sculpted_complex_pdb,
-    format_sculpted_ligand_sdf, molecule_to_smiles, new_sculpt_session, push_undo_checkpoint,
+    format_sculpted_ligand_sdf, new_sculpt_session, push_undo_checkpoint,
     recompute_sculpt_score, redo_sculpt_move, restore_best_sculpt_pose, run_blue_fuse_macro,
     shake_pocket_rotamers, sprout_in_pocket_rgroup, undo_sculpt_move, wiggle_minimize,
     BandAnchorTarget, RubberBandRestraint, SculptFlexibleSidechain, SculptMedalTier,
@@ -331,6 +331,46 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::Path;
+
+pub(crate) mod serde_f32_array {
+    use serde::de::{Error, SeqAccess, Visitor};
+    use serde::ser::SerializeTuple;
+    use serde::{Deserializer, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S: Serializer, const N: usize>(
+        arr: &[f32; N],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut tup = serializer.serialize_tuple(N)?;
+        for &v in arr {
+            tup.serialize_element(&v)?;
+        }
+        tup.end()
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>, const N: usize>(
+        deserializer: D,
+    ) -> Result<[f32; N], D::Error> {
+        struct ArrayVisitor<const N: usize>;
+        impl<'de, const N: usize> Visitor<'de> for ArrayVisitor<N> {
+            type Value = [f32; N];
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "an array of {N} f32 values")
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<[f32; N], A::Error> {
+                let mut out = [0.0f32; N];
+                for (i, slot) in out.iter_mut().enumerate() {
+                    *slot = seq
+                        .next_element()?
+                        .ok_or_else(|| A::Error::invalid_length(i, &self))?;
+                }
+                Ok(out)
+            }
+        }
+        deserializer.deserialize_tuple(N, ArrayVisitor::<N>)
+    }
+}
 
 /// End-to-end analyzed SAR dataset holding sanitized molecules, descriptors, ADMET profiles,
 /// physiological `pH 7.4` micro-`pKa`/protomer summaries, Ertl `SAScore` & `BRICS` counts,

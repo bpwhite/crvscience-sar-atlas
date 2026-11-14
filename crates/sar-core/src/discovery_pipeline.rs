@@ -361,7 +361,9 @@ impl Default for DiscoveryPipelineConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FunnelStageSummary {
     pub stage_num: u8,
+    #[serde(skip_deserializing)]
     pub stage_code: &'static str,
+    #[serde(skip_deserializing)]
     pub stage_title: &'static str,
     pub gate_criteria: String,
     pub input_count: usize,
@@ -705,25 +707,43 @@ where
         let mut raw_intake: Vec<(FunnelSourceStream, String, Molecule)> = Vec::new();
         let mut seen_smiles: BTreeSet<String> = BTreeSet::new();
 
-        let mut push_unique =
-            |stream: FunnelSourceStream, prov: String, mut m: Molecule, id_fallback: &str| {
-                m.sanitize();
-                let can = molecule_to_smiles(&m);
-                if !can.is_empty() && seen_smiles.insert(can.clone()) {
-                    m.smiles = can;
-                    if m.id.trim().is_empty() {
-                        m.id = id_fallback.to_string();
-                    }
-                    if m.name.trim().is_empty() {
-                        m.name = id_fallback.to_string();
-                    }
-                    raw_intake.push((stream, prov, m));
+        fn push_unique_intake(
+            raw_intake: &mut Vec<(FunnelSourceStream, String, Molecule)>,
+            seen_smiles: &mut BTreeSet<String>,
+            stream: FunnelSourceStream,
+            prov: String,
+            mut m: Molecule,
+            id_fallback: &str,
+        ) {
+            m.sanitize();
+            let can = molecule_to_smiles(&m);
+            if !can.is_empty() && seen_smiles.insert(can.clone()) {
+                m.smiles = can;
+                if m.id.trim().is_empty() {
+                    m.id = id_fallback.to_string();
                 }
+                if m.name.trim().is_empty() {
+                    m.name = id_fallback.to_string();
+                }
+                raw_intake.push((stream, prov, m));
+            }
+        }
+        macro_rules! push_unique {
+            ($stream:expr, $prov:expr, $m:expr, $id_fallback:expr $(,)?) => {
+                push_unique_intake(
+                    &mut raw_intake,
+                    &mut seen_smiles,
+                    $stream,
+                    $prov,
+                    $m,
+                    $id_fallback,
+                )
             };
+        }
 
         if cfg.include_dataset_compounds && round_idx == 1 {
             for m in working_ds.mols.iter().take(16) {
-                push_unique(
+                push_unique!(
                     FunnelSourceStream::DatasetLead,
                     format!("Dataset ({})", m.target),
                     m.clone(),
@@ -733,7 +753,7 @@ where
         } else if round_idx > 1 {
             // Carry forward prior round's seed champions so Round R compares strictly >= Round R-1!
             for sm in &round_seeds {
-                push_unique(
+                push_unique!(
                     FunnelSourceStream::DatasetLead,
                     format!("DMTA R{} Carryover Champion", round_idx - 1),
                     sm.clone(),
@@ -766,7 +786,7 @@ where
                     let mut cm = c.mol;
                     cm.id = format!("{r_tag}-DN{:02}", c.rank + si * 10);
                     cm.name = format!("{} {} ({})", r_tag, c.last_operator.short_label(), s_mol.id);
-                    push_unique(
+                    push_unique!(
                         FunnelSourceStream::DeNovoEvolution,
                         format!("{} {} (Seed {})", r_tag, c.last_operator.short_label(), s_mol.id),
                         cm,
@@ -782,7 +802,7 @@ where
                     let mut bm = b.mol;
                     bm.id = format!("{r_tag}-BIO{:02}", bi + 1 + si * 6);
                     bm.name = format!("{} Bioisostere {}", r_tag, b.rule_code);
-                    push_unique(
+                    push_unique!(
                         FunnelSourceStream::BioisostereSwap,
                         format!("Meanwell {} (Seed {})", b.rule_name, s_mol.id),
                         bm,
@@ -803,7 +823,7 @@ where
                         lk.strategy.short_label(),
                         lk.target_dihedral_label
                     );
-                    push_unique(
+                    push_unique!(
                         FunnelSourceStream::RotorConformationLock,
                         format!(
                             "{} (+{:.2} kcal, Seed {})",
@@ -828,7 +848,7 @@ where
                     let mut fm = fg.mol;
                     fm.id = format!("{r_tag}-FBDD{:02}", fg.rank + si * 6);
                     fm.name = format!("{} FBDD {} ({})", r_tag, fg.synthon_code, fg.vector_label);
-                    push_unique(
+                    push_unique!(
                         FunnelSourceStream::FbddFragmentGrow,
                         format!("Rule-of-3 Grow {} ({})", fg.synthon_name, fg.coupling_reaction),
                         fm,
@@ -861,7 +881,7 @@ where
                     let mut lm = fl.mol;
                     lm.id = format!("{r_tag}-FLNK{:02}", fl.rank + si * 5);
                     lm.name = format!("{} Linked {}", r_tag, fl.linker_name);
-                    push_unique(
+                    push_unique!(
                         FunnelSourceStream::FbddFragmentLink,
                         format!(
                             "DeLinker {} (ddG_super {:+.2} kcal, RMSD {:.2} A)",
@@ -879,7 +899,7 @@ where
                     let mut mm = mc.mol;
                     mm.id = format!("{r_tag}-MAC{:02}", mc.rank + si * 5);
                     mm.name = format!("{} Macrocycle {}", r_tag, mc.tether_code);
-                    push_unique(
+                    push_unique!(
                         FunnelSourceStream::MacrocycleClosure,
                         format!("{} ({})", mc.tether_name, mc.clinical_precedent),
                         mm,
@@ -909,7 +929,7 @@ where
                 let mut pm = m_item.mol;
                 pm.id = format!("R{round_idx}-LIB{:02}", m_item.rank);
                 pm.name = format!("R{round_idx} Plate {}", m_item.library_id);
-                push_unique(
+                push_unique!(
                     FunnelSourceStream::ParallelDelLibrary,
                     m_item.reaction_route,
                     pm,
@@ -922,7 +942,7 @@ where
             if let Ok(mut um) = parse_smiles(smi) {
                 um.id = format!("USR-{:02}", ui + 1);
                 um.name = format!("User Candidate {}", ui + 1);
-                push_unique(
+                push_unique!(
                     FunnelSourceStream::CustomUserSmiles,
                     "User Custom Input".to_string(),
                     um,
@@ -932,7 +952,7 @@ where
         }
 
         if raw_intake.is_empty() {
-            push_unique(
+            push_unique!(
                 FunnelSourceStream::DatasetLead,
                 "Fallback Seed Lead".to_string(),
                 round_seeds[0].clone(),

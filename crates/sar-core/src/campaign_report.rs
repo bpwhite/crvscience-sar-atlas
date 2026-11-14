@@ -225,13 +225,18 @@ impl CriterionVerdict {
 /// Explicit Stage-Gate evaluation row comparing observed/predicted property against `TPP` threshold.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StageGateCriterion {
+    #[serde(skip_deserializing)]
     pub code: &'static str,
+    #[serde(skip_deserializing)]
     pub category: &'static str,
+    #[serde(skip_deserializing)]
     pub metric_name: &'static str,
+    #[serde(skip_deserializing)]
     pub target_window: &'static str,
     pub observed_value: String,
     pub desirability_0_1: f64,
     pub verdict: CriterionVerdict,
+    #[serde(skip_deserializing)]
     pub source_module: &'static str,
 }
 
@@ -239,6 +244,7 @@ pub struct StageGateCriterion {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MedChemOptimizationAction {
     pub priority: u8,
+    #[serde(skip_deserializing)]
     pub domain: &'static str,
     pub issue_detected: String,
     pub structural_proposal: String,
@@ -249,6 +255,7 @@ pub struct MedChemOptimizationAction {
 /// Campaign context relationship (`SALI` activity cliff or `MMP` R-group transform) for a lead.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DossierNeighborNote {
+    #[serde(skip_deserializing)]
     pub relation_kind: &'static str,
     pub compound_id: String,
     pub compound_name: String,
@@ -339,6 +346,7 @@ pub struct LeadCampaignDossier {
     pub synth: SynthAccessProfile,
     pub brics: BricsRetrosynthesis,
     pub pka_74: PhysiologicalChargeSummary,
+    #[serde(skip_deserializing)]
     pub shape3d_class: &'static str,
     pub npr1: f32,
     pub npr2: f32,

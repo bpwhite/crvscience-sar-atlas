@@ -810,7 +810,15 @@ pub fn extract_pharmacophore_map(mol: &Molecule) -> PharmacophoreMap {
                 features[i].kind.type_index(),
                 features[j].kind.type_index(),
             );
-            raw_cats[pair_idx * CATS2_MAX_LAG + lag] += 1.0;
+            let base = pair_idx * CATS2_MAX_LAG;
+            raw_cats[base + lag] += 1.0;
+            // Fuzzy ±1 topological bond-lag smoothing bridges 5-membered ring scaffold hops
+            if lag > 0 {
+                raw_cats[base + lag - 1] += 0.50;
+            }
+            if lag + 1 < CATS2_MAX_LAG {
+                raw_cats[base + lag + 1] += 0.50;
+            }
         }
     }
     // Type-frequency scaling per Schneider et al. (1999) / Reutlinger et al. (2013) `CATS2`
@@ -853,6 +861,19 @@ pub fn extract_pharmacophore_map(mol: &Molecule) -> PharmacophoreMap {
             let bin = gobbi_distance_bin(d) as u64;
             let h2 = splitmix64(0x2D02_0000 | (ka << 12) | (kb << 6) | bin);
             fp.set_bit((h2 as usize) % 192);
+            // Soft +/-1 topological distance bin support to smooth 5- vs 6-membered bioisostere shifts
+            if d > 1 {
+                let b_lo = gobbi_distance_bin(d - 1) as u64;
+                if b_lo != bin {
+                    let h_lo = splitmix64(0x2D02_0000 | (ka << 12) | (kb << 6) | b_lo);
+                    fp.set_bit((h_lo as usize) % 192);
+                }
+            }
+            let b_hi = gobbi_distance_bin(d + 1) as u64;
+            if b_hi != bin {
+                let h_hi = splitmix64(0x2D02_0000 | (ka << 12) | (kb << 6) | b_hi);
+                fp.set_bit((h_hi as usize) % 192);
+            }
         }
     }
 

@@ -323,6 +323,7 @@ pub struct PublicStructureReadinessReport {
     /// Composite `[0..100]` Pocket Docking Readiness Score (`Karelina-Dror` + `pLDDT` + `PAE` + druggability).
     pub readiness_score_0_100: f64,
     pub verdict: PocketReadinessVerdict,
+    #[serde(skip_deserializing)]
     pub recommended_next_module: &'static str,
     pub residue_rows: Vec<ResidueConfidenceRow>,
     /// Downsampled `N x N` (`N <= 28`) `PAE` matrix (`Angstrom`) + axis residue numbers for fast heatmap visualization.
@@ -1012,7 +1013,7 @@ pub fn fetch_and_assess_public_structure(
             if let Ok(mut m) = parse_smiles(&smi_s) {
                 m.id = format!("{}-{}", parsed.pdb_id, cid);
                 m.name = cname.clone();
-                let ph = evaluate_physchem(&m);
+                let ph = evaluate_physchem(&m, 0);
                 mw = ph.mw;
                 clogp = ph.clogp;
                 tpsa = ph.tpsa;
@@ -1121,7 +1122,7 @@ pub fn fetch_and_assess_public_structure(
         pocket_druggability_dscore: pocket.druggability_dscore,
         pocket_lining_residue_count: pocket_res_cnt,
         pocket_mean_plddt,
-        pocket_min_plddt,
+        pocket_min_plddt: min_pocket_plddt,
         pocket_mean_pae_a,
         apo_occluding_residues: apo_occluding,
         disordered_intrusion_residues: disordered_intrusions,

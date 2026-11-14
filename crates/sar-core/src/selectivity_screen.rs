@@ -263,6 +263,7 @@ pub struct DivergentResiduePair {
     pub offtarget_residue: String,
     pub approx_pos: [f32; 3],
     pub delta_sidechain_volume_a3: f64,
+    #[serde(skip_deserializing)]
     pub polarity_shift: &'static str,
     pub selectivity_design_note: String,
 }
@@ -425,6 +426,7 @@ pub struct MutationDdGEntry {
     pub wt_res_name: String,
     pub res_seq: i32,
     pub mut_res_name: String,
+    #[serde(skip_deserializing)]
     pub category: &'static str,
     pub min_ligand_dist_a: f32,
     pub wt_dg_kcal: f64,
@@ -575,7 +577,7 @@ pub fn analyze_dual_pocket_selectivity(
             }
         }
         if mob_pts.len() >= 3 {
-            let (rot, trans, rmsd, _) = kabsch_align_3d(&mob_pts, &tgt_pts);
+            let (rot, trans, _aligned, rmsd) = kabsch_align_3d(&mob_pts, &tgt_pts);
             let mut moved = offtarget_pdb.clone();
             let xform = |p: [f32; 3]| -> [f32; 3] {
                 [

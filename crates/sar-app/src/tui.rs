@@ -728,7 +728,7 @@ fn render_ansi_frame(
                     truncate_str(&m.target, 14),
                     m.pact,
                     p.mw,
-                    pk.logd_74,
+                    pk.microstate_logd_74,
                     p.tpsa,
                     p.qed_mean,
                     p.cns_mpo,
@@ -782,7 +782,7 @@ fn render_ansi_frame(
             for (rk, mmp) in ds.mmps[start..end].iter().enumerate() {
                 let ma = &ds.mols[mmp.mol_from];
                 let mb = &ds.mols[mmp.mol_to];
-                let xform = format!("{} -> {}", mmp.r_from, mmp.r_to);
+                let xform = &mmp.transform;
                 writeln!(
                     out,
                     "  #{:<4} {} {} {} {:>+6.2}  {:>+6.2}",
@@ -836,10 +836,10 @@ fn render_ansi_frame(
                     out,
                     "  {BOLD}Slot   Substituent SMILES             Count   Ridge Weight (dpAct){RESET}"
                 )?;
-                for eff in fw.substituents.iter().take(state.page_size) {
-                    let col = if eff.weight >= 0.15 {
+                for eff in fw.effects.iter().take(state.page_size) {
+                    let col = if eff.coeff_pact >= 0.15 {
                         EMERALD
-                    } else if eff.weight <= -0.15 {
+                    } else if eff.coeff_pact <= -0.15 {
                         CORAL
                     } else {
                         SLATE
@@ -847,10 +847,10 @@ fn render_ansi_frame(
                     writeln!(
                         out,
                         "  R{:<4}  {}  {:>4}    {col}{:>+8.3}{RESET}",
-                        eff.slot_idx + 1,
-                        truncate_str(&eff.substituent_smiles, 28),
+                        eff.slot_index + 1,
+                        truncate_str(&eff.substituent, 28),
                         eff.count,
-                        eff.weight
+                        eff.coeff_pact
                     )?;
                 }
             } else {

@@ -1142,7 +1142,8 @@ pub fn run_active_learning_campaign(
     let all_ds_y: Vec<f64> = ds.mols.iter().map(|m| m.pact).collect();
 
     // Partition into Labeled Training Set vs Unlabeled Candidate Pool according to `config.pool_source`
-    let (train_feats, train_y, pool_feats) = match config.pool_source {
+    let (train_feats, train_y, pool_feats): (Vec<FeaturizedMol>, Vec<f64>, Vec<FeaturizedMol>) =
+        match config.pool_source {
         CandidatePoolSource::HarvestedAnalogsAndLibrary => {
             let pool = harvest_prospective_candidate_pool(ds, &config.custom_pool_smiles);
             (all_ds_feats.clone(), all_ds_y.clone(), pool)
@@ -1375,7 +1376,7 @@ pub fn run_active_learning_campaign(
     let mut believer_train = train_feats.clone();
     let mut believer_y = train_y.clone();
     let mut picked_mask = vec![false; candidates.len()];
-    let mut picked_indices_ordered = Vec::with_capacity(target_b);
+    let mut picked_indices_ordered: Vec<usize> = Vec::with_capacity(target_b);
 
     for step_b in 0..target_b {
         if candidates.is_empty() {

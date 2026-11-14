@@ -20,7 +20,7 @@
 //!   `https://pmc.ncbi.nlm.nih.gov/articles/PMC6068280/`)
 //! - Horn (1987) / Kabsch-Umeyama 3D Quaternion Rigid-Body Alignment (`https://pmc.ncbi.nlm.nih.gov/articles/PMC12951576/`)
 
-use crate::fingerprint::Ecfp2048;
+use crate::fingerprint::compute_ecfp;
 use crate::mol::{BondOrder, Element, Hybridization, Molecule};
 use crate::scaffold::murcko_signatures;
 use crate::DatasetAnalysis;
@@ -91,6 +91,7 @@ impl RocsColorKind {
 pub struct RocsColorAtom {
     pub kind: RocsColorKind,
     pub pos3d: [f32; 3],
+    #[serde(skip_deserializing)]
     pub label: &'static str,
 }
 
@@ -172,6 +173,7 @@ pub struct Summary3dProfile {
     pub pbf_angstrom: f32,
     pub npr1: f32,
     pub npr2: f32,
+    #[serde(skip_deserializing)]
     pub shape_class: &'static str,
     pub dipole_debye: f32,
     pub gaussian_volume: f64,
@@ -2026,12 +2028,13 @@ fn perceive_3d_color_atoms(mol: &Molecule, coords3d: &[[f32; 3]]) -> Vec<RocsCol
         }
 
         if matches!(a.elem, Element::O | Element::N) && a.charge <= 0 {
-            let is_amide_nh = a.elem == Element::N
-                && a.total_h() > 0
-                && mol.adj[u]
-                    .iter()
-                    .any(|&(nb, _)| mol.atoms[nb].hyb == Hybridization::Sp2);
-            if !is_amide_nh {
+            let is_non_acceptor_n = a.elem == Element::N
+                && ((a.aromatic && (a.total_h() > 0 || mol.heavy_degree(u) >= 3))
+                    || (a.total_h() > 0
+                        && mol.adj[u]
+                            .iter()
+                            .any(|&(nb, _)| mol.atoms[nb].hyb == Hybridization::Sp2 || mol.atoms[nb].elem == Element::S)));
+            if !is_non_acceptor_n {
                 colors.push(RocsColorAtom {
                     kind: RocsColorKind::HBondAcceptor,
                     pos3d: p,
@@ -2112,7 +2115,7 @@ fn gaussian_color_overlap(colors_a: &[RocsColorAtom], colors_b: &[RocsColorAtom]
     if colors_a.is_empty() || colors_b.is_empty() {
         return 0.0;
     }
-    let alpha_c = 2.19f64;
+    let alpha_c = 0.98f64;
     let k_exp = 0.5 * alpha_c;
     let pref = {
         let ratio = PI / (2.0 * alpha_c);
@@ -2458,16 +2461,37 @@ pub fn align_rocs_3d(
     let (ch, axes_h) = principal_axes_frame(&h_pts);
     let axes_h_t = mat3_transpose(axes_h);
 
-    // 4 proper SO(3) sign flips of the principal frame
+    // Full 24 proper chiral octahedral SO(3) axis-permutation+sign rotations of the principal frame,
+    // augmented with tilts so non-diagonal moments of inertia cannot trap overlay orientation.
     let flips: [[f64; 3]; 4] = [
         [1.0, 1.0, 1.0],
         [1.0, -1.0, -1.0],
         [-1.0, 1.0, -1.0],
         [-1.0, -1.0, 1.0],
     ];
+    let tilt = 0.61f64; // ~35 deg
+    let tilt2 = 1.22f64; // ~70 deg
+    let hpi = std::f64::consts::FRAC_PI_2;
+    let tilt_mats: [[[f64; 3]; 3]; 15] = [
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        rodrigues_rot([0.0, 0.0, tilt]),
+        rodrigues_rot([0.0, 0.0, -tilt]),
+        rodrigues_rot([0.0, tilt, 0.0]),
+        rodrigues_rot([0.0, -tilt, 0.0]),
+        rodrigues_rot([0.0, 0.0, tilt2]),
+        rodrigues_rot([0.0, 0.0, -tilt2]),
+        rodrigues_rot([0.0, tilt2, 0.0]),
+        rodrigues_rot([0.0, -tilt2, 0.0]),
+        rodrigues_rot([hpi, 0.0, 0.0]),
+        rodrigues_rot([-hpi, 0.0, 0.0]),
+        rodrigues_rot([0.0, hpi, 0.0]),
+        rodrigues_rot([0.0, -hpi, 0.0]),
+        rodrigues_rot([0.0, 0.0, hpi]),
+        rodrigues_rot([0.0, 0.0, -hpi]),
+    ];
 
     let p2 = GAUSS_P * GAUSS_P;
-    let alpha_c = 2.19f64;
+    let alpha_c = 0.98f64;
     let kc_exp = 0.5 * alpha_c;
     let pref_c = {
         let ratio = PI / (2.0 * alpha_c);
@@ -2485,118 +2509,121 @@ pub fn align_rocs_3d(
                 flipped_q[row][col] *= flip[col];
             }
         }
-        let mut rot = mat3_mul(flipped_q, axes_h_t);
-        let r_ch = mat3_vec3(rot, ch);
-        let mut trans = [cq[0] - r_ch[0], cq[1] - r_ch[1], cq[2] - r_ch[2]];
+        let base_rot = mat3_mul(flipped_q, axes_h_t);
+        for tmat in tilt_mats {
+            let mut rot = mat3_mul(tmat, base_rot);
+            let r_ch = mat3_vec3(rot, ch);
+            let mut trans = [cq[0] - r_ch[0], cq[1] - r_ch[1], cq[2] - r_ch[2]];
 
-        // Fast 22-step 6-DOF rigid-body gradient ascent on combined Gaussian Shape + Color objective
-        let mut step_t = 0.018f64;
-        let mut step_r = 0.008f64;
+            // Fast 34-step 6-DOF rigid-body gradient ascent on combined Gaussian Shape + Color objective
+            let mut step_t = 0.055f64;
+            let mut step_r = 0.040f64;
 
-        for _it in 0..22 {
-            let mut force_sum = [0.0f64; 3];
-            let mut torque_sum = [0.0f64; 3];
-            let mut cur_obj = 0.0f64;
+            for _it in 0..34 {
+                let mut force_sum = [0.0f64; 3];
+                let mut torque_sum = [0.0f64; 3];
+                let mut cur_obj = 0.0f64;
 
-            // Shape overlap forces & torques around cq
-            for j in 0..nh {
-                let r_hj = mat3_vec3(rot, h_pts[j]);
-                let xj = [r_hj[0] + trans[0], r_hj[1] + trans[1], r_hj[2] + trans[2]];
-                let arm = sub3(xj, cq);
-                let aj = alphas_h[j];
+                // Shape overlap forces & torques around cq
+                for j in 0..nh {
+                    let r_hj = mat3_vec3(rot, h_pts[j]);
+                    let xj = [r_hj[0] + trans[0], r_hj[1] + trans[1], r_hj[2] + trans[2]];
+                    let arm = sub3(xj, cq);
+                    let aj = alphas_h[j];
 
-                for i in 0..nq {
-                    let ai = alphas_q[i];
-                    let sum_a = ai + aj;
-                    let k_exp = (ai * aj) / sum_a;
-                    let diff = sub3(q_pts[i], xj); // q_i - x_j
-                    let d2 = dot3(diff, diff);
-                    if k_exp * d2 > 12.0 {
-                        continue;
+                    for i in 0..nq {
+                        let ai = alphas_q[i];
+                        let sum_a = ai + aj;
+                        let k_exp = (ai * aj) / sum_a;
+                        let diff = sub3(q_pts[i], xj); // q_i - x_j
+                        let d2 = dot3(diff, diff);
+                        if k_exp * d2 > 12.0 {
+                            continue;
+                        }
+                        let ratio = PI / sum_a;
+                        let v_ij = p2 * ratio * ratio.sqrt() * (-k_exp * d2).exp();
+                        cur_obj += v_ij;
+                        // d(v_ij)/d(xj) = 2 * k_exp * v_ij * (q_i - x_j)
+                        let s = 2.0 * k_exp * v_ij;
+                        let fj = [s * diff[0], s * diff[1], s * diff[2]];
+                        force_sum[0] += fj[0];
+                        force_sum[1] += fj[1];
+                        force_sum[2] += fj[2];
+                        let tq = cross3(arm, fj);
+                        torque_sum[0] += tq[0];
+                        torque_sum[1] += tq[1];
+                        torque_sum[2] += tq[2];
                     }
-                    let ratio = PI / sum_a;
-                    let v_ij = p2 * ratio * ratio.sqrt() * (-k_exp * d2).exp();
-                    cur_obj += v_ij;
-                    // d(v_ij)/d(xj) = 2 * k_exp * v_ij * (q_i - x_j)
-                    let s = 2.0 * k_exp * v_ij;
-                    let fj = [s * diff[0], s * diff[1], s * diff[2]];
-                    force_sum[0] += fj[0];
-                    force_sum[1] += fj[1];
-                    force_sum[2] += fj[2];
-                    let tq = cross3(arm, fj);
-                    torque_sum[0] += tq[0];
-                    torque_sum[1] += tq[1];
-                    torque_sum[2] += tq[2];
                 }
-            }
 
-            // Color feature overlap forces & torques (weight 0.65)
-            for cb in hit_colors {
-                let p_cb = [cb.pos3d[0] as f64, cb.pos3d[1] as f64, cb.pos3d[2] as f64];
-                let r_cb = mat3_vec3(rot, p_cb);
-                let xj = [r_cb[0] + trans[0], r_cb[1] + trans[1], r_cb[2] + trans[2]];
-                let arm = sub3(xj, cq);
+                // Color feature overlap forces & torques (weight 0.65)
+                for cb in hit_colors {
+                    let p_cb = [cb.pos3d[0] as f64, cb.pos3d[1] as f64, cb.pos3d[2] as f64];
+                    let r_cb = mat3_vec3(rot, p_cb);
+                    let xj = [r_cb[0] + trans[0], r_cb[1] + trans[1], r_cb[2] + trans[2]];
+                    let arm = sub3(xj, cq);
 
-                for ca in query_colors {
-                    if ca.kind != cb.kind {
-                        continue;
+                    for ca in query_colors {
+                        if ca.kind != cb.kind {
+                            continue;
+                        }
+                        let qi = [ca.pos3d[0] as f64, ca.pos3d[1] as f64, ca.pos3d[2] as f64];
+                        let diff = sub3(qi, xj);
+                        let d2 = dot3(diff, diff);
+                        if kc_exp * d2 > 10.0 {
+                            continue;
+                        }
+                        let v_c = 2.40 * pref_c * (-kc_exp * d2).exp();
+                        cur_obj += v_c;
+                        let s = 2.0 * kc_exp * v_c;
+                        let fj = [s * diff[0], s * diff[1], s * diff[2]];
+                        force_sum[0] += fj[0];
+                        force_sum[1] += fj[1];
+                        force_sum[2] += fj[2];
+                        let tq = cross3(arm, fj);
+                        torque_sum[0] += tq[0];
+                        torque_sum[1] += tq[1];
+                        torque_sum[2] += tq[2];
                     }
-                    let qi = [ca.pos3d[0] as f64, ca.pos3d[1] as f64, ca.pos3d[2] as f64];
-                    let diff = sub3(qi, xj);
-                    let d2 = dot3(diff, diff);
-                    if kc_exp * d2 > 10.0 {
-                        continue;
-                    }
-                    let v_c = 0.65 * pref_c * (-kc_exp * d2).exp();
-                    cur_obj += v_c;
-                    let s = 2.0 * kc_exp * v_c;
-                    let fj = [s * diff[0], s * diff[1], s * diff[2]];
-                    force_sum[0] += fj[0];
-                    force_sum[1] += fj[1];
-                    force_sum[2] += fj[2];
-                    let tq = cross3(arm, fj);
-                    torque_sum[0] += tq[0];
-                    torque_sum[1] += tq[1];
-                    torque_sum[2] += tq[2];
                 }
+
+                if cur_obj > best_obj {
+                    best_obj = cur_obj;
+                    best_rot = rot;
+                    best_trans = trans;
+                }
+
+                let fnrm = norm3(force_sum);
+                let tnrm = norm3(torque_sum);
+                if fnrm < 1e-4 && tnrm < 1e-4 {
+                    break;
+                }
+
+                let dt_scale = (step_t / fnrm.max(1.0)).min(step_t);
+                let dr_scale = (step_r / tnrm.max(1.0)).min(step_r);
+                let d_omega = [
+                    torque_sum[0] * dr_scale,
+                    torque_sum[1] * dr_scale,
+                    torque_sum[2] * dr_scale,
+                ];
+                let d_rot = rodrigues_rot(d_omega);
+
+                // Rotate around cq + translate by force_sum * dt_scale
+                // x' = cq + d_rot * (rot * h + trans - cq) + dt
+                //    = (d_rot * rot) * h + (cq + d_rot * (trans - cq) + dt)
+                let new_rot = mat3_mul(d_rot, rot);
+                let tc = sub3(trans, cq);
+                let r_tc = mat3_vec3(d_rot, tc);
+                let new_trans = [
+                    cq[0] + r_tc[0] + force_sum[0] * dt_scale,
+                    cq[1] + r_tc[1] + force_sum[1] * dt_scale,
+                    cq[2] + r_tc[2] + force_sum[2] * dt_scale,
+                ];
+                rot = new_rot;
+                trans = new_trans;
+                step_t *= 0.94;
+                step_r *= 0.94;
             }
-
-            if cur_obj > best_obj {
-                best_obj = cur_obj;
-                best_rot = rot;
-                best_trans = trans;
-            }
-
-            let fnrm = norm3(force_sum);
-            let tnrm = norm3(torque_sum);
-            if fnrm < 1e-4 && tnrm < 1e-4 {
-                break;
-            }
-
-            let dt_scale = (step_t / fnrm.max(1.0)).min(step_t);
-            let dr_scale = (step_r / tnrm.max(1.0)).min(step_r);
-            let d_omega = [
-                torque_sum[0] * dr_scale,
-                torque_sum[1] * dr_scale,
-                torque_sum[2] * dr_scale,
-            ];
-            let d_rot = rodrigues_rot(d_omega);
-
-            // Rotate around cq + translate by force_sum * dt_scale
-            // x' = cq + d_rot * (rot * h + trans - cq) + dt
-            //    = (d_rot * rot) * h + (cq + d_rot * (trans - cq) + dt)
-            let new_rot = mat3_mul(d_rot, rot);
-            let tc = sub3(trans, cq);
-            let r_tc = mat3_vec3(d_rot, tc);
-            let new_trans = [
-                cq[0] + r_tc[0] + force_sum[0] * dt_scale,
-                cq[1] + r_tc[1] + force_sum[1] * dt_scale,
-                cq[2] + r_tc[2] + force_sum[2] * dt_scale,
-            ];
-            rot = new_rot;
-            trans = new_trans;
-            step_t *= 0.94;
-            step_r *= 0.94;
         }
     }
 
@@ -2763,12 +2790,8 @@ pub fn screen_3d_overlay_library(
         return Vec::new();
     }
 
-    let q_fp = Ecfp2048::from_molecule(query_mol, 2);
-    let q_murcko = murcko_signatures(std::slice::from_ref(query_mol))
-        .into_iter()
-        .next()
-        .unwrap_or_default();
-    let ds_murcko = murcko_signatures(&ds.mols);
+    let q_fp = compute_ecfp(query_mol, 2);
+    let (q_murcko, _, _, _) = murcko_signatures(query_mol);
 
     // Stage 1: USRCAT pre-filter across visible candidates
     let mut pre_candidates: Vec<(usize, f64, bool)> = (0..ds.mols.len())
@@ -2778,7 +2801,8 @@ pub fn screen_3d_overlay_library(
                     return None;
                 }
             }
-            let is_hop = !q_murcko.is_empty() && ds_murcko[i] != q_murcko;
+            let (ds_m_fw, _, _, _) = murcko_signatures(&ds.mols[i]);
+            let is_hop = !q_murcko.is_empty() && ds_m_fw != q_murcko;
             if scaffold_hops_only && !is_hop {
                 return None;
             }

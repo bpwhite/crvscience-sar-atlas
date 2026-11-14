@@ -1579,13 +1579,6 @@ pub fn enumerate_parallel_library(
         stage1_score: f64,
     }
 
-    let murcko_all = murcko_signatures(
-        &unique_raw
-            .iter()
-            .map(|u| u.mol.clone())
-            .collect::<Vec<Molecule>>(),
-    );
-
     let stage1_all: Vec<Stage1Entry> = unique_raw
         .into_par_iter()
         .enumerate()
@@ -1602,6 +1595,7 @@ pub fn enumerate_parallel_library(
             let pc = evaluate_physchem(&inter.mol, pains);
             let sa = evaluate_synthetic_accessibility(&inter.mol);
             let fp = compute_ecfp(&inter.mol, 2);
+            let (murcko, _, _, _) = murcko_signatures(&inter.mol);
             let (fidelity_pct, dna_note) = evaluate_synthetic_fidelity(
                 config.synthesis_mode,
                 scheme.steps,
@@ -1635,7 +1629,7 @@ pub fn enumerate_parallel_library(
                 fidelity_pct,
                 dna_note,
                 fp,
-                murcko: murcko_all.get(idx).cloned().unwrap_or_default(),
+                murcko,
                 passes_guardrails: passes,
                 stage1_score,
             }

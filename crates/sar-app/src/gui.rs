@@ -2585,7 +2585,10 @@ impl SarAtlasGuiApp {
             let met = &self.ds.metabolism[idx];
             let sa = &self.ds.synth_access[idx];
             let alerts = &self.ds.alerts[idx];
-            let (sm_atoms, sm_bonds) = self.smarts_highlights_for(idx);
+            let (sm_atoms, sm_bonds) = {
+                let (a, b) = self.smarts_highlights_for(idx);
+                (a.to_vec(), b.to_vec())
+            };
             let sm_match_cnt = self
                 .smarts_results
                 .get(idx)
@@ -2603,7 +2606,7 @@ impl SarAtlasGuiApp {
                     Vec::new()
                 };
             let active_cyan_atoms: &[usize] = if !sm_atoms.is_empty() {
-                sm_atoms
+                &sm_atoms
             } else {
                 &fw_core_atoms
             };
@@ -2877,7 +2880,7 @@ impl SarAtlasGuiApp {
                     mol,
                     &alert_atoms,
                     active_cyan_atoms,
-                    sm_bonds,
+                    &sm_bonds,
                     true,
                 );
 
@@ -13114,8 +13117,9 @@ impl SarAtlasGuiApp {
             self.macro_selected_cand_idx = ci;
         }
         if let Some((smi, label)) = load_in_sketcher_req {
-            match self.sketcher.load_smiles_str(&smi, &label) {
+            match self.sketcher.load_from_smiles(&smi) {
                 Ok(_) => {
+                    self.sketcher.mol.name = label.clone();
                     self.sketch_cached_rev = 0;
                     self.refresh_sketch_report();
                     self.active_tab = WorkbenchTab::Sketcher;
@@ -14021,8 +14025,9 @@ impl SarAtlasGuiApp {
             );
         }
         if let Some((smi, lbl)) = load_sketch_req {
-            match self.sketcher.load_smiles_str(&smi, &lbl) {
+            match self.sketcher.load_from_smiles(&smi) {
                 Ok(_) => {
+                    self.sketcher.mol.name = lbl.clone();
                     self.sketch_cached_rev = 0;
                     self.refresh_sketch_report();
                     self.active_tab = WorkbenchTab::Sketcher;
@@ -14875,8 +14880,9 @@ impl SarAtlasGuiApp {
             self.prodrug_selected_cand_idx = ci;
         }
         if let Some((smi, lbl)) = load_sketch_req {
-            match self.sketcher.load_smiles_str(&smi, &lbl) {
+            match self.sketcher.load_from_smiles(&smi) {
                 Ok(_) => {
+                    self.sketcher.mol.name = lbl.clone();
                     self.sketch_cached_rev = 0;
                     self.refresh_sketch_report();
                     self.active_tab = WorkbenchTab::Sketcher;
@@ -15880,7 +15886,7 @@ impl SarAtlasGuiApp {
                         format!("Loaded {cnt} molecules from {}", p.display()),
                     );
                 }
-                Err(err) => self.status_banner = format!("Load error: {e}"),
+                Err(err) => self.status_banner = format!("Load error: {err}"),
             }
         }
     }
@@ -16600,7 +16606,11 @@ impl SarAtlasGuiApp {
                     let [vr, vg, vb] = viridis_rgb(t_norm);
                     ui.horizontal(|ui| {
                         ui.colored_label(
-                            Color32::from_rgb(vr, vg, vb),
+                            Color32::from_rgb(
+                                (vr * 255.0).clamp(0.0, 255.0).round() as u8,
+                                (vg * 255.0).clamp(0.0, 255.0).round() as u8,
+                                (vb * 255.0).clamp(0.0, 255.0).round() as u8,
+                            ),
                             RichText::new(format!("{:>4.1}", m.pact)).monospace().size(11.0),
                         );
                         let lbl = format!("{} ({})", m.name, m.id);
@@ -18497,7 +18507,8 @@ impl SarAtlasGuiApp {
                     &active_mem.mol,
                     &[],
                     &[],
-                    Color32::from_rgb(15, 23, 42),
+                    &[],
+                    false,
                 );
 
                 ui.horizontal_wrapped(|ui| {
@@ -18563,7 +18574,7 @@ impl SarAtlasGuiApp {
 
         if let Some(mol_sk) = send_to_sketcher_mol {
             self.sketcher.mol = mol_sk;
-            self.sketch_smiles_buf = self.sketcher.mol.smiles.clone();
+            self.sketch_smiles_bar = self.sketcher.mol.smiles.clone();
             self.sketch_cached_rev = 0;
             self.refresh_sketch_report();
             self.navigate_to_tab(WorkbenchTab::Sketcher);
@@ -19696,7 +19707,8 @@ impl SarAtlasGuiApp {
                             &active_cand.mol,
                             &[],
                             &[],
-                            Color32::from_rgb(15, 23, 42),
+                            &[],
+                            false,
                         );
                         ui.monospace(format!(
                             "pAct {:.2}+-{:.2} | EI {:.3}",
@@ -19721,7 +19733,7 @@ impl SarAtlasGuiApp {
 
         if let Some(m_sk) = load_sketch_mol {
             self.sketcher.mol = m_sk;
-            self.sketch_smiles_buf = self.sketcher.mol.smiles.clone();
+            self.sketch_smiles_bar = self.sketcher.mol.smiles.clone();
             self.sketch_cached_rev = 0;
             self.refresh_sketch_report();
             self.navigate_to_tab(WorkbenchTab::Sketcher);
@@ -20023,7 +20035,8 @@ impl SarAtlasGuiApp {
                             &src_nd.mol,
                             &active_edge.lomap.perturbed_atoms_a,
                             &[],
-                            Color32::from_rgb(15, 23, 42),
+                            &[],
+                            false,
                         );
                         let (r_b, _) =
                             ui.allocate_exact_size(Vec2::new(w_pair, 92.0), Sense::hover());
@@ -20033,7 +20046,8 @@ impl SarAtlasGuiApp {
                             &dst_nd.mol,
                             &active_edge.lomap.perturbed_atoms_b,
                             &[],
-                            Color32::from_rgb(15, 23, 42),
+                            &[],
+                            false,
                         );
                         ui.monospace(format!(
                             "BAR {:+.2}+-{:.2} | MLE {:+.2} kcal",
@@ -20058,7 +20072,7 @@ impl SarAtlasGuiApp {
 
         if let Some(m_sk) = load_sketch_mol {
             self.sketcher.mol = m_sk;
-            self.sketch_smiles_buf = self.sketcher.mol.smiles.clone();
+            self.sketch_smiles_bar = self.sketcher.mol.smiles.clone();
             self.sketch_cached_rev = 0;
             self.refresh_sketch_report();
             self.navigate_to_tab(WorkbenchTab::Sketcher);
@@ -20491,9 +20505,10 @@ impl SarAtlasGuiApp {
                             ui.painter(),
                             r_p,
                             &rep.mol,
+                            &[],
                             &hl_atoms,
                             &hl_bonds,
-                            Color32::from_rgb(15, 23, 42),
+                            false,
                         );
                     });
 
@@ -20514,7 +20529,8 @@ impl SarAtlasGuiApp {
                                 &lk.mol,
                                 &[],
                                 &[],
-                                Color32::from_rgb(15, 23, 42),
+                                &[],
+                                false,
                             );
                         } else {
                             ui.label("No lockable acyclic rotors.");
@@ -20543,7 +20559,7 @@ impl SarAtlasGuiApp {
 
         if let Some(m_sk) = load_sketch_mol {
             self.sketcher.mol = m_sk;
-            self.sketch_smiles_buf = self.sketcher.mol.smiles.clone();
+            self.sketch_smiles_bar = self.sketcher.mol.smiles.clone();
             self.sketch_cached_rev = 0;
             self.refresh_sketch_report();
             self.navigate_to_tab(WorkbenchTab::Sketcher);
@@ -22253,7 +22269,7 @@ impl SarAtlasGuiApp {
                     if let Some(mp) = resp.interact_pointer_pos() {
                         let target3d = unproj(mp, z_depth);
                         drag_tug_atom_step(&mut sess, drag_ai, target3d);
-                        ui.ctx().request_repaint();
+                        ui_l.ctx().request_repaint();
                     }
                 } else {
                     let d = resp.drag_delta();
@@ -22320,7 +22336,7 @@ impl SarAtlasGuiApp {
                                     if ra.is_polar {
                                         let (sp2, _) = proj_with_z(ra.pos);
                                         let d2 = sp2.distance(mp);
-                                        if d2 <= 18.0 && best_t.map_or(true, |b| d2 < b.0) {
+                                        if d2 <= 18.0 && best_t.as_ref().map_or(true, |b| d2 < b.0) {
                                             best_t = Some((d2, ra.label.clone(), ra.pos, 2.85));
                                         }
                                     }
@@ -22329,14 +22345,14 @@ impl SarAtlasGuiApp {
                                     let tip = sc.rotamer_tips[sc.active_rotamer.min(3)];
                                     let (sp2, _) = proj_with_z(tip);
                                     let d2 = sp2.distance(mp);
-                                    if d2 <= 18.0 && best_t.map_or(true, |b| d2 < b.0) {
+                                    if d2 <= 18.0 && best_t.as_ref().map_or(true, |b| d2 < b.0) {
                                         best_t = Some((d2, sc.residue_id.clone(), tip, 2.85));
                                     }
                                 }
                                 for wt in &sess.water_targets {
                                     let (sp2, _) = proj_with_z(wt.pos);
                                     let d2 = sp2.distance(mp);
-                                    if d2 <= 18.0 && best_t.map_or(true, |b| d2 < b.0) {
+                                    if d2 <= 18.0 && best_t.as_ref().map_or(true, |b| d2 < b.0) {
                                         best_t = Some((d2, wt.site_id.clone(), wt.pos, 0.90));
                                     }
                                 }
@@ -25301,7 +25317,8 @@ impl SarAtlasGuiApp {
                             &active_cand.mol,
                             &[],
                             &[],
-                            Color32::from_rgb(15, 23, 42),
+                            &[],
+                            false,
                         );
                         ui.monospace(format!(
                             "Score {:.1} | MaxTc {:.2}",
@@ -25315,7 +25332,7 @@ impl SarAtlasGuiApp {
 
         if let Some(m_sk) = load_sketch_mol {
             self.sketcher.mol = m_sk;
-            self.sketch_smiles_buf = self.sketcher.mol.smiles.clone();
+            self.sketch_smiles_bar = self.sketcher.mol.smiles.clone();
             self.sketch_cached_rev = 0;
             self.refresh_sketch_report();
             self.navigate_to_tab(WorkbenchTab::Sketcher);

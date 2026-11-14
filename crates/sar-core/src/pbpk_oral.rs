@@ -161,6 +161,7 @@ impl Default for PbpkDosingConfig {
 /// Rodgers & Rowland (2006) predicted organ-to-plasma partition coefficients (`Kp_tissue`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OrganPartitionEntry {
+    #[serde(skip_deserializing)]
     pub organ_name: &'static str,
     pub volume_l: f64,
     pub kp_total: f64,
@@ -229,12 +230,19 @@ pub struct OralPbpkReport {
     pub peak_ro_brain_pct: f64,
 
     // RK4 Time-Series Arrays (`PBPK_TIME_POINTS = 97`)
+    #[serde(with = "crate::serde_f32_array")]
     pub time_hr: [f32; PBPK_TIME_POINTS],
+    #[serde(with = "crate::serde_f32_array")]
     pub c_total_plasma_nm: [f32; PBPK_TIME_POINTS],
+    #[serde(with = "crate::serde_f32_array")]
     pub c_unbound_plasma_nm: [f32; PBPK_TIME_POINTS],
+    #[serde(with = "crate::serde_f32_array")]
     pub c_unbound_brain_nm: [f32; PBPK_TIME_POINTS],
+    #[serde(with = "crate::serde_f32_array")]
     pub ro_plasma_pct: [f32; PBPK_TIME_POINTS],
+    #[serde(with = "crate::serde_f32_array")]
     pub ro_brain_pct: [f32; PBPK_TIME_POINTS],
+    #[serde(with = "crate::serde_f32_array")]
     pub gi_absorbed_pct: [f32; PBPK_TIME_POINTS],
 }
 
@@ -450,11 +458,11 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
 
     // 1. Plasma/Blood/Brain binding & BBB Kp,uu,brain:
     let (fu_plasma, rbp, fu_brain) =
-        predict_binding_and_rbp(phys.clogp, pka.logd_74, pka.dominant_class);
+        predict_binding_and_rbp(phys.clogp, pka.microstate_logd_74, pka.charge_class);
     let (ps_bbb_l_hr, bbb_er, kp_uu_brain, cns_class) = predict_bbb_kpuu(
         mol,
         mw,
-        pka.logd_74,
+        pka.microstate_logd_74,
         phys.tpsa,
         phys.hbd,
         phys.cns_mpo,
@@ -466,18 +474,18 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
     // 2. Rodgers & Rowland (2006) Organ Partitioning & V_ss:
     let (organ_kps, vss_total_l, vss_l_per_kg) = compute_rodgers_rowland_vss(
         phys.clogp,
-        pka.logd_74,
+        pka.microstate_logd_74,
         fu_plasma,
-        pka.dominant_class,
+        pka.charge_class,
         kp_brain_total,
     );
 
     // 3. Human Jejunal Effective Permeability P_eff (10^-4 cm/s, Winiwarter / Sun correlation):
-    let charge_pen = pka.net_charge_74.abs() * 0.42;
+    let charge_pen = pka.mean_net_charge_74.abs() * 0.42;
     let log_peff = 0.58
         - 0.0112 * phys.tpsa
         - 0.145 * (phys.hbd as f64)
-        + 0.155 * pka.logd_74.clamp(-2.0, 4.2)
+        + 0.155 * pka.microstate_logd_74.clamp(-2.0, 4.2)
         - charge_pen
         - 0.0014 * (mw - 380.0).max(0.0);
     let peff_1e4_cm_s = 10f64.powf(log_peff).clamp(0.05, 12.0);
@@ -489,11 +497,13 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
     let ka_seg_hr = (1.14 * peff_cm_hr).clamp(0.04, 8.5);
 
     // 4. Luminal Dissolution Solubility (`ug/mL` -> `nmol/L` = `nM`) in Fasted (FaSSIF) vs Fed (FeSSIF):
-    let ion_hh = 10f64.powf(((phys.clogp - pka.logd_74).clamp(-0.2, 3.4)) * 0.75);
+    let ion_hh = 10f64.powf(((phys.clogp - pka.microstate_logd_74).clamp(-0.2, 3.4)) * 0.75);
     let bile_micelle_mult = match config.prandial {
-        PrandialState::Fasted => 1.0 + 0.12 * 10f64.powf((pka.logd_74 - 2.5).clamp(-2.0, 2.2)),
+        PrandialState::Fasted => {
+            1.0 + 0.12 * 10f64.powf((pka.microstate_logd_74 - 2.5).clamp(-2.0, 2.2))
+        }
         PrandialState::FedBileMicelles => {
-            1.25 + 1.85 * 10f64.powf((pka.logd_74 - 2.0).clamp(-2.0, 2.2))
+            1.25 + 1.85 * 10f64.powf((pka.microstate_logd_74 - 2.0).clamp(-2.0, 2.2))
         }
     }
     .clamp(1.0, 14.0);
@@ -501,11 +511,11 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
     // Convert ug/mL (= mg/L) -> nmol/L: `(mg/L * 1e6) / mw`
     let c_sat_si_nm = (luminal_sol_ug_ml * 1.0e6) / mw;
     // Stomach solubility at pH 1.6 (fasted: basic amines protonate & dissolve >25x faster!) vs pH 4.8 (fed):
-    let stom_base_boost = if pka.dominant_class == ChargeClass74::Cationic
+    let stom_base_boost = if pka.charge_class == ChargeClass74::Cationic
         && config.prandial == PrandialState::Fasted
     {
         18.0
-    } else if pka.dominant_class == ChargeClass74::Anionic
+    } else if pka.charge_class == ChargeClass74::Anionic
         && config.prandial == PrandialState::Fasted
     {
         0.25
@@ -547,7 +557,8 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
     let fh_hepatic = (1.0 - hepatic_extraction_eh).clamp(0.04, 0.99);
 
     // Glomerular filtration + tubular reabsorption renal plasma clearance (GFR = 7.5 L/h):
-    let tubular_reabs = (1.0 / (1.0 + 10f64.powf(-0.65 * pka.logd_74))).clamp(0.05, 0.92);
+    let tubular_reabs =
+        (1.0 / (1.0 + 10f64.powf(-0.65 * pka.microstate_logd_74))).clamp(0.05, 0.92);
     let cl_renal_plasma_l_hr = (7.5 * fu_plasma * (1.0 - 0.80 * tubular_reabs)).clamp(0.01, 6.5);
     let cl_sys_plasma_l_hr = cl_hepatic_blood_l_hr * rbp + cl_renal_plasma_l_hr;
 
@@ -749,8 +760,8 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
         target_ic50_nm,
         mw,
         clogp: phys.clogp,
-        logd_74: pka.logd_74,
-        charge_class_74: pka.dominant_class,
+        logd_74: pka.microstate_logd_74,
+        charge_class_74: pka.charge_class,
         config,
         fu_plasma,
         blood_to_plasma_rbp: rbp,

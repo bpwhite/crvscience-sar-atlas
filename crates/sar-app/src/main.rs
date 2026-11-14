@@ -1489,7 +1489,7 @@ fn main() {
             export_screen_csv,
             export_pdb,
         } => {
-            let ds = load_dataset_or_default(input.as_deref());
+            let ds = load_dataset_or_project(input.as_ref(), 0.30, 6.0);
             let pr = if pdb.is_some() || preset.eq_ignore_ascii_case("custom") {
                 EspTargetPreset::CustomPdbEspComplementarity
             } else {
@@ -1764,7 +1764,7 @@ Co-Crystallized Ligands Extracted:");
             export_pdb,
             export_sdf,
         } => {
-            let ds = load_dataset_or_default(input.as_deref());
+            let ds = load_dataset_or_project(input.as_ref(), 0.30, 6.0);
             let pr = if pdb.is_some() || puzzle.eq_ignore_ascii_case("sandbox") || puzzle.eq_ignore_ascii_case("custom") {
                 SculptPuzzlePreset::CustomPdbFreeformSandbox
             } else {
@@ -1888,7 +1888,7 @@ Co-Crystallized Ligands Extracted:");
             export_screen_csv,
             export_pdb,
         } => {
-            let ds = load_dataset_or_default(input.as_deref());
+            let ds = load_dataset_or_project(input.as_ref(), 0.30, 6.0);
             let pr = if pdb.is_some() || preset.eq_ignore_ascii_case("custom") {
                 WaterMapPreset::CustomPdbWaterMap
             } else {
@@ -2055,7 +2055,7 @@ Co-Crystallized Ligands Extracted:");
             export_screen_csv,
             export_pdb,
         } => {
-            let ds = load_dataset_or_default(input.as_deref());
+            let ds = load_dataset_or_project(input.as_ref(), 0.30, 6.0);
             let pr = if pdb.is_some() || preset.eq_ignore_ascii_case("custom") {
                 HBondNetworkPreset::CustomPdbHBondNetwork
             } else {
@@ -2204,7 +2204,7 @@ Co-Crystallized Ligands Extracted:");
             export_rotamers_csv,
             export_sdf,
         } => {
-            let ds = load_dataset_or_default(input.as_deref());
+            let ds = load_dataset_or_project(input.as_ref(), 0.30, 6.0);
             let pr = if pdb.is_some() || preset.eq_ignore_ascii_case("custom") {
                 InducedFitPreset::CustomPdbFlexibleEnsemble
             } else {
@@ -2340,7 +2340,7 @@ Co-Crystallized Ligands Extracted:");
             export_csv,
             export_sdf,
         } => {
-            let ds = load_dataset_or_default(input.as_deref());
+            let ds = load_dataset_or_project(input.as_ref(), 0.30, 6.0);
             let pr = match pair.trim().to_ascii_lowercase().as_str() {
                 "cox2" | "3ln1" => FragmentPairPreset::Cox23ln1SulfonamideAndTolyl,
                 "drd2" | "6cm4" => FragmentPairPreset::Drd26cm4PiperidineAndBenzisoxazole,
@@ -4070,8 +4070,7 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                         enz
                     );
                     csv_rows.push_str(&format!(
-                        ""{}","{}","{}",{:.1},{:.1},{},"{}","{}","{}",{:.1},{:.2}
-",
+                        "\"{}\",\"{}\",\"{}\",{:.1},{:.1},{},\"{}\",\"{}\",\"{}\",{:.1},{:.2}\n",
                         r.id,
                         r.name,
                         r.bcs_class.short_label(),
@@ -4244,8 +4243,7 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                         r.sociability_score
                     );
                     csv_rows.push_str(&format!(
-                        ""{}","{}",{},{:.1},{:.2},{:.3},{:.2},{:.2},{:.2},{},{},{},{:.1}
-",
+                        "\"{}\",\"{}\",{},{:.1},{:.2},{:.3},{:.2},{:.2},{:.2},{},{},{},{:.1}\n",
                         r.id,
                         r.name,
                         r.hac,
@@ -4393,8 +4391,7 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                             top.druggability.short_label()
                         );
                         csv_rows.push_str(&format!(
-                            ""{}","{}",{:.2},{:.2},{},"{}","{}",{},{:+.2},{:.1},{:.2},{:.3},"{}",{:.1}
-",
+                            "\"{}\",\"{}\",{:.2},{:.2},{},\"{}\",\"{}\",{},{:+.2},{:.1},{:.2},{:.3},\"{}\",{:.1}\n",
                             m.id,
                             m.name,
                             m.pact,

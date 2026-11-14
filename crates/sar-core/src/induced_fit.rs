@@ -283,7 +283,9 @@ pub struct SideChainRepackMove {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReceptorEnsembleMember {
     pub state_idx: usize,
+    #[serde(skip_deserializing)]
     pub state_code: &'static str,
+    #[serde(skip_deserializing)]
     pub state_title: &'static str,
     /// Intrinsic `Fischer-Shoichet` apo conformational reorganization energy `dG_reorg,k >= 0` (`kcal/mol`).
     pub apo_reorg_penalty_kcal: f64,
@@ -300,7 +302,9 @@ pub struct ReceptorEnsembleMember {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EnsembleStateDockingScore {
     pub state_idx: usize,
+    #[serde(skip_deserializing)]
     pub state_code: &'static str,
+    #[serde(skip_deserializing)]
     pub state_title: &'static str,
     pub apo_reorg_penalty_kcal: f64,
     pub apo_weight: f64,
@@ -348,6 +352,7 @@ pub struct InducedFitEnsembleReport {
 
     // Conformational Selection / State Redistribution Telemetry
     pub dominant_state_idx: usize,
+    #[serde(skip_deserializing)]
     pub dominant_state_code: &'static str,
     pub dominant_holo_occupancy_pct: f64,
     /// Kullback-Leibler divergence `D_KL(w_holo || w_apo)` (`nats`) quantifying ligand-driven state shift.
@@ -376,6 +381,7 @@ pub struct DatasetInducedFitRow {
     pub ddg_induced_fit_rescue_kcal: f64,
     pub sherman_ifd_score_kcal: f64,
     pub ensemble_predicted_pkd: f64,
+    #[serde(skip_deserializing)]
     pub dominant_state_code: &'static str,
     pub dominant_occupancy_pct: f64,
     pub repacked_residues: usize,
@@ -918,7 +924,8 @@ fn dock_and_repack_in_state(
     cfg: &InducedFitConfig,
 ) -> EnsembleStateDockingScore {
     // 1. Score rigid pre-repacked state first + pick best soft-core clash-tolerant ligand pose
-    let pre_res = score_ligand_in_pocket(mol, ds, &member.pocket_analysis);
+    let mol_idx = ds.and_then(|d| d.mols.iter().position(|dm| dm.id == mol.id));
+    let pre_res = score_ligand_in_pocket(mol, mol_idx, &member.pocket_analysis);
     let pre_dg = pre_res.total_dg_pocket_kcal;
 
     let state_flex = perceive_flexible_pocket_residues(
@@ -1022,7 +1029,7 @@ fn dock_and_repack_in_state(
     // 3. Re-analyze repacked cavity & score hard-core post-repacked complex
     let repacked_pocket =
         analyze_binding_pocket(&working_pdb, Some(member.pocket_analysis.center), 10.0);
-    let post_res = score_ligand_in_pocket(mol, ds, &repacked_pocket);
+    let post_res = score_ligand_in_pocket(mol, mol_idx, &repacked_pocket);
 
     let mut moves: Vec<SideChainRepackMove> = Vec::new();
     let mut total_rot_strain = 0.0f64;
@@ -1169,12 +1176,13 @@ pub fn score_ligand_with_prebuilt_ensemble(
     ensemble_members: &[ReceptorEnsembleMember],
 ) -> InducedFitEnsembleReport {
     let rt = (0.001_987_204 * cfg.temperature_k.clamp(250.0, 340.0)).max(0.45);
-    let rigid_holo = score_ligand_in_pocket(mol, ds, holo_pocket);
+    let mol_idx = ds.and_then(|d| d.mols.iter().position(|dm| dm.id == mol.id));
+    let rigid_holo = score_ligand_in_pocket(mol, mol_idx, holo_pocket);
     let rigid_holo_dg = rigid_holo.total_dg_pocket_kcal;
 
     let conf_ens = generate_3d_conformer_ensemble(
         mol,
-        ConformerGenConfig {
+        &ConformerGenConfig {
             num_trial_conformers: 6,
             max_kept_conformers: 4,
             mmff_max_iters: 80,

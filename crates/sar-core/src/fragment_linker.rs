@@ -648,9 +648,12 @@ pub struct ExitVectorPairGeometry {
 pub struct LinkedFragmentCandidate {
     pub rank: usize,
     pub candidate_id: String,
+    #[serde(skip_deserializing)]
     pub linker_code: &'static str,
+    #[serde(skip_deserializing)]
     pub linker_name: &'static str,
     pub linker_class: LinkerScaffoldClass,
+    #[serde(skip_deserializing)]
     pub coupling_reaction: &'static str,
     pub canonical_smiles: String,
 
@@ -1527,6 +1530,324 @@ fn strip_poised_halide(
     Some((out, out_coords, new_anchor, core_old))
 }
 
+fn kabsch_align_subset_local(
+    mol_coords: &mut [[f32; 3]],
+    mov_indices: &[usize],
+    ref_coords: &[[f32; 3]],
+) -> f64 {
+    let n = mov_indices.len().min(ref_coords.len());
+    if n < 3 || mol_coords.is_empty() {
+        return 99.9;
+    }
+    let mut cm = [0.0_f64; 3];
+    let mut cr = [0.0_f64; 3];
+    for k in 0..n {
+        let idx = mov_indices[k];
+        if idx >= mol_coords.len() {
+            return 99.9;
+        }
+        for d in 0..3 {
+            cm[d] += mol_coords[idx][d] as f64;
+            cr[d] += ref_coords[k][d] as f64;
+        }
+    }
+    let nf = n as f64;
+    for d in 0..3 {
+        cm[d] /= nf;
+        cr[d] /= nf;
+    }
+    let mut s = [[0.0_f64; 3]; 3];
+    for k in 0..n {
+        let p = mol_coords[mov_indices[k]];
+        let q = ref_coords[k];
+        let pm = [p[0] as f64 - cm[0], p[1] as f64 - cm[1], p[2] as f64 - cm[2]];
+        let qr = [q[0] as f64 - cr[0], q[1] as f64 - cr[1], q[2] as f64 - cr[2]];
+        for i in 0..3 {
+            for j in 0..3 {
+                s[i][j] += pm[i] * qr[j];
+            }
+        }
+    }
+    let mut kmat = [
+        [
+            s[0][0] + s[1][1] + s[2][2],
+            s[1][2] - s[2][1],
+            s[2][0] - s[0][2],
+            s[0][1] - s[1][0],
+        ],
+        [
+            s[1][2] - s[2][1],
+            s[0][0] - s[1][1] - s[2][2],
+            s[0][1] + s[1][0],
+            s[2][0] + s[0][2],
+        ],
+        [
+            s[2][0] - s[0][2],
+            s[0][1] + s[1][0],
+            -s[0][0] + s[1][1] - s[2][2],
+            s[1][2] + s[2][1],
+        ],
+        [
+            s[0][1] - s[1][0],
+            s[2][0] + s[0][2],
+            s[1][2] + s[2][1],
+            -s[0][0] - s[1][1] + s[2][2],
+        ],
+    ];
+    let mut v = [[0.0_f64; 4]; 4];
+    for i in 0..4 {
+        v[i][i] = 1.0;
+    }
+    for _ in 0..24 {
+        for p in 0..4 {
+            for q in (p + 1)..4 {
+                let apq = kmat[p][q];
+                if apq.abs() < 1e-12 {
+                    continue;
+                }
+                let tau = (kmat[q][q] - kmat[p][p]) / (2.0 * apq);
+                let t = if tau >= 0.0 {
+                    1.0 / (tau + (1.0 + tau * tau).sqrt())
+                } else {
+                    -1.0 / (-tau + (1.0 + tau * tau).sqrt())
+                };
+                let c = 1.0 / (1.0 + t * t).sqrt();
+                let sn = t * c;
+                let app = kmat[p][p];
+                let aqq = kmat[q][q];
+                kmat[p][p] = app - t * apq;
+                kmat[q][q] = aqq + t * apq;
+                kmat[p][q] = 0.0;
+                kmat[q][p] = 0.0;
+                for r in 0..4 {
+                    if r != p && r != q {
+                        let krp = kmat[r][p];
+                        let krq = kmat[r][q];
+                        kmat[r][p] = c * krp - sn * krq;
+                        kmat[p][r] = kmat[r][p];
+                        kmat[r][q] = sn * krp + c * krq;
+                        kmat[q][r] = kmat[r][q];
+                    }
+                    let vrp = v[r][p];
+                    let vrq = v[r][q];
+                    v[r][p] = c * vrp - sn * vrq;
+                    v[r][q] = sn * vrp + c * vrq;
+                }
+            }
+        }
+    }
+    let mut best_col = 0;
+    let mut best_eval = kmat[0][0];
+    for j in 1..4 {
+        if kmat[j][j] > best_eval {
+            best_eval = kmat[j][j];
+            best_col = j;
+        }
+    }
+    let (qw, qx, qy, qz) = (v[0][best_col], v[1][best_col], v[2][best_col], v[3][best_col]);
+    let rot = [
+        [
+            1.0 - 2.0 * (qy * qy + qz * qz),
+            2.0 * (qx * qy - qz * qw),
+            2.0 * (qx * qz + qy * qw),
+        ],
+        [
+            2.0 * (qx * qy + qz * qw),
+            1.0 - 2.0 * (qx * qx + qz * qz),
+            2.0 * (qy * qz - qx * qw),
+        ],
+        [
+            2.0 * (qx * qz - qy * qw),
+            2.0 * (qy * qz + qx * qw),
+            1.0 - 2.0 * (qx * qx + qy * qy),
+        ],
+    ];
+    for pt in mol_coords.iter_mut() {
+        let dx = pt[0] as f64 - cm[0];
+        let dy = pt[1] as f64 - cm[1];
+        let dz = pt[2] as f64 - cm[2];
+        pt[0] = (rot[0][0] * dx + rot[0][1] * dy + rot[0][2] * dz + cr[0]) as f32;
+        pt[1] = (rot[1][0] * dx + rot[1][1] * dy + rot[1][2] * dz + cr[1]) as f32;
+        pt[2] = (rot[2][0] * dx + rot[2][1] * dy + rot[2][2] * dz + cr[2]) as f32;
+    }
+    let mut sq = 0.0_f64;
+    for k in 0..n {
+        let p = mol_coords[mov_indices[k]];
+        let q = ref_coords[k];
+        let dx = (p[0] - q[0]) as f64;
+        let dy = (p[1] - q[1]) as f64;
+        let dz = (p[2] - q[2]) as f64;
+        sq += dx * dx + dy * dy + dz * dz;
+    }
+    (sq / nf).sqrt()
+}
+
+fn rotate_subtree_about_bond(
+    coords: &mut [[f32; 3]],
+    pivot_idx: usize,
+    axis_to_idx: usize,
+    subtree: &[usize],
+    theta_rad: f64,
+) {
+    let p0 = coords[pivot_idx];
+    let p1 = coords[axis_to_idx];
+    let ax = [
+        (p1[0] - p0[0]) as f64,
+        (p1[1] - p0[1]) as f64,
+        (p1[2] - p0[2]) as f64,
+    ];
+    let len = (ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]).sqrt();
+    if len < 1e-6 {
+        return;
+    }
+    let u = [ax[0] / len, ax[1] / len, ax[2] / len];
+    let (sa, ca) = theta_rad.sin_cos();
+    let one_m_ca = 1.0 - ca;
+    for &idx in subtree {
+        let r = [
+            coords[idx][0] as f64 - p0[0] as f64,
+            coords[idx][1] as f64 - p0[1] as f64,
+            coords[idx][2] as f64 - p0[2] as f64,
+        ];
+        let u_dot_r = u[0] * r[0] + u[1] * r[1] + u[2] * r[2];
+        let u_cross_r = [
+            u[1] * r[2] - u[2] * r[1],
+            u[2] * r[0] - u[0] * r[2],
+            u[0] * r[1] - u[1] * r[0],
+        ];
+        coords[idx] = [
+            (p0[0] as f64 + r[0] * ca + u_cross_r[0] * sa + u[0] * u_dot_r * one_m_ca) as f32,
+            (p0[1] as f64 + r[1] * ca + u_cross_r[1] * sa + u[1] * u_dot_r * one_m_ca) as f32,
+            (p0[2] as f64 + r[2] * ca + u_cross_r[2] * sa + u[2] * u_dot_r * one_m_ca) as f32,
+        ];
+    }
+}
+
+fn refine_linked_pose_torsions(
+    mol: &Molecule,
+    init_pose: &[[f32; 3]],
+    frag_a_atoms: &[usize],
+    core_coords_a: &[[f32; 3]],
+    frag_b_atoms: &[usize],
+    core_coords_b: &[[f32; 3]],
+    init_rmsd: f64,
+) -> (Vec<[f32; 3]>, f64) {
+    let n_atoms = mol.atoms.len();
+    if init_pose.len() != n_atoms || frag_a_atoms.is_empty() || frag_b_atoms.is_empty() {
+        return (init_pose.to_vec(), init_rmsd);
+    }
+    let mut mov_dual = Vec::with_capacity(frag_a_atoms.len() + frag_b_atoms.len());
+    let mut ref_dual = Vec::with_capacity(frag_a_atoms.len() + frag_b_atoms.len());
+    for (k, &ai) in frag_a_atoms.iter().enumerate() {
+        if ai < n_atoms && k < core_coords_a.len() {
+            mov_dual.push(ai);
+            ref_dual.push(core_coords_a[k]);
+        }
+    }
+    for (k, &bi) in frag_b_atoms.iter().enumerate() {
+        if bi < n_atoms && k < core_coords_b.len() {
+            mov_dual.push(bi);
+            ref_dual.push(core_coords_b[k]);
+        }
+    }
+    if mov_dual.len() < 4 {
+        return (init_pose.to_vec(), init_rmsd);
+    }
+
+    // Identify rotatable single acyclic bonds and their smaller rotating subtree
+    let mut rotors: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    for b in &mol.bonds {
+        if b.in_ring || b.aromatic || b.order != BondOrder::Single {
+            continue;
+        }
+        let side_a = collect_component_excluding_bond(mol, b.a, b.idx);
+        let side_b = collect_component_excluding_bond(mol, b.b, b.idx);
+        if side_a.len() + side_b.len() != n_atoms {
+            continue;
+        }
+        if side_a.len().min(side_b.len()) < 2 {
+            continue;
+        }
+        if side_a.len() <= side_b.len() {
+            rotors.push((b.b, b.a, side_a));
+        } else {
+            rotors.push((b.a, b.b, side_b));
+        }
+    }
+
+    // Build bonded-or-1,3 pair exclusion set so steric check ignores valid covalent geometry
+    let mut adj_mask = vec![vec![false; n_atoms]; n_atoms];
+    for i in 0..n_atoms {
+        adj_mask[i][i] = true;
+        for &(j, _) in &mol.adj[i] {
+            adj_mask[i][j] = true;
+            for &(k, _) in &mol.adj[j] {
+                adj_mask[i][k] = true;
+            }
+        }
+    }
+    let eval_score = |coords: &mut Vec<[f32; 3]>| -> (f64, f64) {
+        let rmsd = kabsch_align_subset_local(coords, &mov_dual, &ref_dual);
+        let mut clash = 0.0_f64;
+        for i in 0..n_atoms {
+            if mol.atoms[i].elem == Element::H {
+                continue;
+            }
+            for j in (i + 1)..n_atoms {
+                if adj_mask[i][j] || mol.atoms[j].elem == Element::H {
+                    continue;
+                }
+                let dx = (coords[i][0] - coords[j][0]) as f64;
+                let dy = (coords[i][1] - coords[j][1]) as f64;
+                let dz = (coords[i][2] - coords[j][2]) as f64;
+                let d2 = dx * dx + dy * dy + dz * dz;
+                if d2 < 2.25 {
+                    let d = d2.sqrt();
+                    clash += (1.50 - d).powi(2) * 3.0;
+                }
+            }
+        }
+        (rmsd + clash, rmsd)
+    };
+
+    let mut best_coords = init_pose.to_vec();
+    let (mut best_obj, mut best_rmsd) = eval_score(&mut best_coords);
+
+    let step_schedules: &[&[f64]] = &[
+        &[
+            30.0, 60.0, 90.0, 120.0, 150.0, 180.0, 210.0, 240.0, 270.0, 300.0, 330.0,
+        ],
+        &[-18.0, -9.0, -3.0, 3.0, 9.0, 18.0],
+        &[-6.0, -2.0, -0.7, 0.7, 2.0, 6.0],
+    ];
+
+    for angles_deg in step_schedules {
+        for &(pivot, axis_to, ref subtree) in &rotors {
+            let base = best_coords.clone();
+            let mut local_best_obj = best_obj;
+            let mut local_best_rmsd = best_rmsd;
+            let mut local_best_coords: Option<Vec<[f32; 3]>> = None;
+            for &deg in *angles_deg {
+                let mut cand = base.clone();
+                rotate_subtree_about_bond(&mut cand, pivot, axis_to, subtree, deg.to_radians());
+                let (obj, rmsd) = eval_score(&mut cand);
+                if obj < local_best_obj - 1e-4 {
+                    local_best_obj = obj;
+                    local_best_rmsd = rmsd;
+                    local_best_coords = Some(cand);
+                }
+            }
+            if let Some(c) = local_best_coords {
+                best_coords = c;
+                best_obj = local_best_obj;
+                best_rmsd = local_best_rmsd;
+            }
+        }
+    }
+
+    (best_coords, best_rmsd)
+}
+
 /// Assembles `Frag A + LinkerTemplate + Frag B` into a sanitized `Molecule` while tracking exact
 /// atom-index provenance `(frag_a_atoms, linker_atoms, frag_b_atoms)`.
 fn splice_fragments_with_linker(
@@ -1736,8 +2057,8 @@ fn align_conformer_to_subpocket_cores(
         mov_dual.push(conf_coords[frag_b_atoms[i]]);
     }
 
-    // Compute rigid transform `(R, t)` via Kabsch on `(ref_dual, mov_dual)` and apply to all atoms of `conf_coords`
-    let aligned_dual = kabsch_align_3d(&ref_dual, &mov_dual);
+    // Compute rigid transform `(R, t)` mapping `mov_dual -> ref_dual` via Kabsch and apply to all atoms of `conf_coords`
+    let (_, _, aligned_dual, _) = kabsch_align_3d(&mov_dual, &ref_dual);
     let aligned_all = apply_rigid_transform_from_anchors(&mov_dual, &aligned_dual, conf_coords);
 
     let mut sq_a = 0.0f64;
@@ -2013,7 +2334,7 @@ pub fn design_linked_fragments(
             // 2. Multi-conformer 3D ensemble -> select conformer minimizing Dual-Core Kabsch RMSD_Fragments
             let ens = generate_3d_conformer_ensemble(
                 &linked_mol,
-                ConformerGenConfig {
+                &ConformerGenConfig {
                     num_trial_conformers: 8,
                     max_kept_conformers: 5,
                     mmff_max_iters: 90,
@@ -2062,10 +2383,23 @@ pub fn design_linked_fragments(
                 best_rmsd_ab = rab + span_mismatch * 0.22;
             }
 
+            let (best_aligned, best_rmsd_ab) = if !best_aligned.is_empty() {
+                refine_linked_pose_torsions(
+                    &linked_mol,
+                    &best_aligned,
+                    &frag_a_atoms,
+                    &core_coords_a,
+                    &frag_b_atoms,
+                    &core_coords_b,
+                    best_rmsd_ab,
+                )
+            } else {
+                (best_aligned, best_rmsd_ab)
+            };
             let pose_preserved = best_rmsd_ab <= DELINKER_POSE_PRESERVED_RMSD_A;
 
             // 3. Pocket scoring & CSD/SMARTS Torsion Strain on linked molecule
-            let p_linked = score_ligand_in_pocket(&linked_mol, ds, &pocket);
+            let p_linked = score_ligand_in_pocket(&linked_mol, None, &pocket);
             let tor_rep = analyze_torsion_strain_and_locks(&linked_mol, ds, pose_src, false);
 
             // 4. Jencks (1981) + Murray & Verdonk (2002) Super-Additivity Free-Energy Cycle
@@ -2094,7 +2428,10 @@ pub fn design_linked_fragments(
                 LinkerScaffoldClass::HeteroatomOrAlkylChain => -0.18,
                 LinkerScaffoldClass::DirectBondFusion => -0.10,
             };
-            let clash_pen = (p_linked.clash_atom_count as f64) * 0.55;
+            let new_clashes = p_linked
+                .clash_atom_count
+                .saturating_sub(p_score_a.clash_atom_count + p_score_b.clash_atom_count);
+            let clash_pen = (new_clashes as f64) * 0.55;
             let dg_linker_pocket =
                 (raw_channel_delta + hbond_channel_bonus + clash_pen).clamp(-1.85, 2.40);
 
@@ -2128,7 +2465,7 @@ pub fn design_linked_fragments(
             let hac = physchem.heavy_atoms.max(1) as f64;
             let le = -dg_linked_ab / hac;
             let lle = predicted_pkd - physchem.clogp;
-            let lle_74 = predicted_pkd - pka.logd_74;
+            let lle_74 = predicted_pkd - pka.microstate_logd_74;
             let linker_hac = linker_atoms.len().max(1) as f64;
             let linker_ge = (-dg_link_term) / linker_hac;
 

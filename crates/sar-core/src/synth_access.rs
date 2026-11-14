@@ -110,11 +110,14 @@ pub struct BricsBondCut {
     pub bond_idx: usize,
     pub atom_a: usize,
     pub atom_b: usize,
+    #[serde(skip_deserializing)]
     pub env_a: &'static str,
+    #[serde(skip_deserializing)]
     pub env_b: &'static str,
     /// Canonical pair code, e.g. `"L14-L5"` or `"L16-L14"`.
     pub pair_code: String,
     /// Forward synthetic coupling reaction name (e.g. `"SNAr / Buchwald-Hartwig Amination"`).
+    #[serde(skip_deserializing)]
     pub reaction_name: &'static str,
     /// Priority score (`1..=100`) ordering synthetic disconnections in multi-bond shredding.
     pub priority: u8,
@@ -127,6 +130,7 @@ pub struct BricsBondCut {
 pub struct BricsSynthon {
     pub idx: usize,
     /// `"Core Scaffold Brick"`, `"Ring Synthon"`, or `"Side-Chain / Linker Reagent"`.
+    #[serde(skip_deserializing)]
     pub role: &'static str,
     /// Forward reagent archetype (e.g. `"Heteroaryl Electrophile ([14*])"`).
     pub reagent_archetype: String,
@@ -200,7 +204,7 @@ fn compute_atom_morgan_hashes(mol: &Molecule, rounds: usize) -> Vec<u64> {
                 })
                 .collect();
             nbr_sigs.sort_unstable();
-            let mut acc = splitmix64(cur[u] ^ ((r as u64 + 1) * 0x517C_C1B7_2722_0A95));
+            let mut acc = splitmix64(cur[u] ^ (r as u64 + 1).wrapping_mul(0x517C_C1B7_2722_0A95));
             for s in nbr_sigs {
                 acc = splitmix64(acc.wrapping_add(s));
             }

@@ -277,9 +277,13 @@ pub struct DisplaceableWaterRGroupDesign {
     pub target_site_pos3d: [f32; 3],
     pub vector_distance_a: f32,
     pub vector_alignment_deg: f32,
+    #[serde(skip_deserializing)]
     pub rgroup_code: &'static str,
+    #[serde(skip_deserializing)]
     pub rgroup_name: &'static str,
+    #[serde(skip_deserializing)]
     pub rgroup_smiles_suffix: &'static str,
+    #[serde(skip_deserializing)]
     pub synthetic_reaction: &'static str,
     pub strategy: RGroupSolvationStrategy,
     pub designed_smiles: String,
@@ -922,7 +926,7 @@ fn build_rgroup_analog_smiles(
 /// Core `WaterMap` / `GIST` solvation mapper and R-group designer operating on a pre-parsed PDB & pocket.
 pub fn analyze_watermap_with_prebuilt(
     mol: &Molecule,
-    _ds: Option<&DatasetAnalysis>,
+    ds: Option<&DatasetAnalysis>,
     cfg: &WaterMapConfig,
     pdb: &ParsedPdbStructure,
     pocket: &PocketCavityAnalysis,
@@ -931,7 +935,8 @@ pub fn analyze_watermap_with_prebuilt(
 ) -> WaterMapSolvationReport {
     let spacing = cfg.gist_voxel_spacing_a.clamp(0.50, 1.25);
     let r_co = cfg.displacement_cutoff_a.clamp(1.60, 3.20);
-    let pocket_res = score_ligand_in_pocket(mol, pocket, None);
+    let mol_idx = ds.and_then(|d| d.mols.iter().position(|dm| dm.id == mol.id));
+    let pocket_res = score_ligand_in_pocket(mol, mol_idx, pocket);
     let lig_coords = pocket_res.aligned_ligand_coords3d.clone();
 
     let half_span = 6.75_f32;
@@ -1252,7 +1257,7 @@ pub fn analyze_watermap_with_prebuilt(
 
     let mut designs: Vec<DisplaceableWaterRGroupDesign> = Vec::new();
     if enumerate_rgroups && cfg.design_rgroup_vectors && !lig_coords.is_empty() {
-        let parent_physchem = evaluate_physchem(mol);
+        let parent_physchem = evaluate_physchem(mol, 0);
         let parent_lle = mol.pact - parent_physchem.clogp;
         let exit_vecs = perceive_fragment_exit_vectors(mol);
 
@@ -1336,10 +1341,10 @@ pub fn analyze_watermap_with_prebuilt(
                         continue;
                     }
 
-                    let phys = evaluate_physchem(&cand_mol);
+                    let alerts = scan_structural_alerts(&cand_mol);
+                    let phys = evaluate_physchem(&cand_mol, alerts.len());
                     let sa = evaluate_synthetic_accessibility(&cand_mol).sa_score;
-                    let pains_cnt = scan_structural_alerts(&cand_mol)
-                        .alerts
+                    let pains_cnt = alerts
                         .iter()
                         .filter(|a| a.family.eq_ignore_ascii_case("PAINS"))
                         .count();
@@ -1506,7 +1511,7 @@ pub fn screen_dataset_watermap_solvation(
         .enumerate()
         .map(|(idx, m)| {
             let rep = analyze_watermap_with_prebuilt(m, Some(ds), cfg, &pdb, &pocket, &target_name, true);
-            let phys = evaluate_physchem(m);
+            let phys = evaluate_physchem(m, ds.alerts.get(idx).map(|v| v.len()).unwrap_or(0));
             let top_rg = rep
                 .rgroup_designs
                 .first()

@@ -831,11 +831,43 @@ pub fn find_pairwise_mcs(
         (mcs_atom_count as f32) / (denom as f32)
     };
 
-    let ref_pts: Vec<[f32; 2]> = core_atoms_a.iter().map(|&u| mol_a.atoms[u].pos2d).collect();
-    let mob_pts: Vec<[f32; 2]> = core_atoms_b.iter().map(|&v| mol_b.atoms[v].pos2d).collect();
+    let is_rigid_scaffold_a = |u: usize| -> bool {
+        mol_a.atoms[u].in_ring
+            || mol_a.adj[u]
+                .iter()
+                .filter(|&&(nbr, _)| mol_a.atoms[nbr].in_ring)
+                .count()
+                >= 2
+    };
+    let is_rigid_scaffold_b = |v: usize| -> bool {
+        mol_b.atoms[v].in_ring
+            || mol_b.adj[v]
+                .iter()
+                .filter(|&&(nbr, _)| mol_b.atoms[nbr].in_ring)
+                .count()
+                >= 2
+    };
+    let rigid_pairs: Vec<(usize, usize)> = core_atoms_a
+        .iter()
+        .copied()
+        .zip(core_atoms_b.iter().copied())
+        .filter(|&(u, v)| is_rigid_scaffold_a(u) && is_rigid_scaffold_b(v))
+        .collect();
+    let (ref_pts, mob_pts): (Vec<[f32; 2]>, Vec<[f32; 2]>) = if rigid_pairs.len() >= 4 {
+        rigid_pairs
+            .iter()
+            .map(|&(u, v)| (mol_a.atoms[u].pos2d, mol_b.atoms[v].pos2d))
+            .unzip()
+    } else {
+        (
+            core_atoms_a.iter().map(|&u| mol_a.atoms[u].pos2d).collect(),
+            core_atoms_b.iter().map(|&v| mol_b.atoms[v].pos2d).collect(),
+        )
+    };
     let (_, _, _, core_rmsd_2d, _) = solve_2d_procrustes(&ref_pts, &mob_pts);
 
     let mcs_smarts = mapping_to_consensus_smarts(mol_a, mol_b, &final_pairs, cfg.atom_mode);
+    let mcs_bond_count = core_bonds_a.len();
 
     Some(PairwiseMcsResult {
         atom_mapping: final_pairs,
@@ -844,7 +876,7 @@ pub fn find_pairwise_mcs(
         core_bonds_a,
         core_bonds_b,
         mcs_atom_count,
-        mcs_bond_count: core_bonds_a.len(),
+        mcs_bond_count,
         mcs_tanimoto,
         mcs_smarts,
         core_rmsd_2d,
@@ -1009,10 +1041,16 @@ pub fn detect_and_align_series_mcs(
                 let best_meets = *best_mcnt >= min_required;
                 if meets != best_meets {
                     meets
-                } else if q_len != *best_qlen {
-                    q_len > *best_qlen
                 } else {
-                    matched_list.len() > *best_mcnt
+                    let score_new = matched_list.len() * matched_list.len() * q_len;
+                    let score_best = (*best_mcnt) * (*best_mcnt) * (*best_qlen);
+                    if score_new != score_best {
+                        score_new > score_best
+                    } else if matched_list.len() != *best_mcnt {
+                        matched_list.len() > *best_mcnt
+                    } else {
+                        q_len > *best_qlen
+                    }
                 }
             }
         };
@@ -1069,8 +1107,30 @@ pub fn detect_and_align_series_mcs(
         let mut best_xform = ([[1.0f32, 0.0], [0.0, 1.0]], [0.0f32, 0.0], [0.0f32, 0.0], f32::INFINITY, false);
 
         for map_cand in &mres.mappings {
-            let mob_pts: Vec<[f32; 2]> = map_cand.iter().map(|&u| orig.atoms[u].pos2d).collect();
-            let xf = solve_2d_procrustes(&ref_pts, &mob_pts);
+            let mut rigid_ref = Vec::new();
+            let mut rigid_mob = Vec::new();
+            for (idx, &u) in map_cand.iter().enumerate() {
+                if idx >= ref_pts.len() {
+                    break;
+                }
+                let is_rigid = orig.atoms[u].in_ring
+                    || orig.adj[u]
+                        .iter()
+                        .filter(|&&(nbr, _)| orig.atoms[nbr].in_ring)
+                        .count()
+                        >= 2;
+                if is_rigid {
+                    rigid_ref.push(ref_pts[idx]);
+                    rigid_mob.push(orig.atoms[u].pos2d);
+                }
+            }
+            let xf = if rigid_ref.len() >= 4 {
+                let (c, s, t, rigid_rmsd, n) = solve_2d_procrustes(&rigid_ref, &rigid_mob);
+                (c, s, t, rigid_rmsd, n)
+            } else {
+                let mob_pts: Vec<[f32; 2]> = map_cand.iter().map(|&u| orig.atoms[u].pos2d).collect();
+                solve_2d_procrustes(&ref_pts, &mob_pts)
+            };
             if xf.3 < best_xform.3 - 1e-4 {
                 best_xform = xf;
                 best_emb = map_cand.clone();
@@ -1078,6 +1138,104 @@ pub fn detect_and_align_series_mcs(
         }
 
         let mut al_mol = orig.clone();
+        if best_xform.3 > 0.25 {
+            // Try 180-deg single-bond rotamer flips across acyclic MCS bridge bonds (e.g. 4-anilino C-N)
+            let core_set_cand: BTreeSet<usize> = best_emb.iter().copied().collect();
+            for b in &orig.bonds {
+                if b.in_ring
+                    || b.aromatic
+                    || b.order != crate::mol::BondOrder::Single
+                    || !core_set_cand.contains(&b.a)
+                    || !core_set_cand.contains(&b.b)
+                {
+                    continue;
+                }
+                let mut side_a = Vec::new();
+                let mut visited = BTreeSet::new();
+                let mut q = std::collections::VecDeque::new();
+                visited.insert(b.a);
+                q.push_back(b.a);
+                let mut hits_b = false;
+                while let Some(cur) = q.pop_front() {
+                    if cur == b.b {
+                        hits_b = true;
+                        break;
+                    }
+                    side_a.push(cur);
+                    for &(nbr, bi) in &orig.adj[cur] {
+                        if bi != b.idx && visited.insert(nbr) {
+                            q.push_back(nbr);
+                        }
+                    }
+                }
+                if hits_b || side_a.is_empty() {
+                    continue;
+                }
+                let side_b_len = orig.atoms.len().saturating_sub(side_a.len());
+                let rot_side: Vec<usize> = if side_a.len() <= side_b_len {
+                    side_a
+                } else {
+                    (0..orig.atoms.len()).filter(|i| !visited.contains(i)).collect()
+                };
+                let p = orig.atoms[b.a].pos2d;
+                let v = orig.atoms[b.b].pos2d;
+                let dx = (v[0] - p[0]) as f64;
+                let dy = (v[1] - p[1]) as f64;
+                let len = (dx * dx + dy * dy).sqrt();
+                if len < 1e-6 {
+                    continue;
+                }
+                let ux = dx / len;
+                let uy = dy / len;
+                let mut trial_mol = orig.clone();
+                for &w in &rot_side {
+                    let rx = (trial_mol.atoms[w].pos2d[0] - p[0]) as f64;
+                    let ry = (trial_mol.atoms[w].pos2d[1] - p[1]) as f64;
+                    let proj = rx * ux + ry * uy;
+                    trial_mol.atoms[w].pos2d[0] = (p[0] as f64 + 2.0 * proj * ux - rx) as f32;
+                    trial_mol.atoms[w].pos2d[1] = (p[1] as f64 + 2.0 * proj * uy - ry) as f32;
+                }
+                let t_xf = {
+                    let mut best_cand_xf = ([[1.0f32, 0.0], [0.0, 1.0]], [0.0f32, 0.0], [0.0f32, 0.0], f32::INFINITY, false);
+                    let mut best_cand_emb = best_emb.clone();
+                    for map_cand in &mres.mappings {
+                        let mut t_ref = Vec::new();
+                        let mut t_mob = Vec::new();
+                        for (idx, &u) in map_cand.iter().enumerate() {
+                            if idx >= ref_pts.len() {
+                                break;
+                            }
+                            let is_rigid = trial_mol.atoms[u].in_ring
+                                || trial_mol.adj[u]
+                                    .iter()
+                                    .filter(|&&(nbr, _)| trial_mol.atoms[nbr].in_ring)
+                                    .count()
+                                    >= 2;
+                            if is_rigid {
+                                t_ref.push(ref_pts[idx]);
+                                t_mob.push(trial_mol.atoms[u].pos2d);
+                            }
+                        }
+                        let xf = if t_ref.len() >= 4 {
+                            solve_2d_procrustes(&t_ref, &t_mob)
+                        } else {
+                            let all_mob: Vec<[f32; 2]> = map_cand.iter().map(|&u| trial_mol.atoms[u].pos2d).collect();
+                            solve_2d_procrustes(&ref_pts, &all_mob)
+                        };
+                        if xf.3 < best_cand_xf.3 - 1e-4 {
+                            best_cand_xf = xf;
+                            best_cand_emb = map_cand.clone();
+                        }
+                    }
+                    (best_cand_xf, best_cand_emb)
+                };
+                if t_xf.0.3 < best_xform.3 - 1e-4 {
+                    best_xform = t_xf.0;
+                    best_emb = t_xf.1;
+                    al_mol = trial_mol;
+                }
+            }
+        }
         apply_2d_transform(&mut al_mol, best_xform.0, best_xform.1, best_xform.2);
         let subst = extract_port_substituents(&al_mol, &best_emb);
         raw_member_subst.push(subst);

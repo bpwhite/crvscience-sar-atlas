@@ -117,6 +117,7 @@ pub struct CyclizableTerminalPair {
     /// `MMFF-lite` low-energy 3D conformer.
     pub spatial_dist_3d_a: f32,
     pub label: String,
+    #[serde(skip_deserializing)]
     pub rationale: &'static str,
     pub suitability_score: f64,
 }
@@ -149,9 +150,12 @@ pub struct PreorganizationMetrics {
 pub struct MacrocycleCandidate {
     pub rank: usize,
     pub candidate_id: String,
+    #[serde(skip_deserializing)]
     pub tether_code: &'static str,
+    #[serde(skip_deserializing)]
     pub tether_name: &'static str,
     pub reaction: MacroClosureReaction,
+    #[serde(skip_deserializing)]
     pub clinical_precedent: &'static str,
     pub tether_chain_atoms: usize,
     pub pair_label: String,

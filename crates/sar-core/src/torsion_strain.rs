@@ -1539,13 +1539,12 @@ fn design_rotatable_bond_locks(
             let rocs = align_rocs_3d(
                 mol,
                 bioactive_coords,
-                &parent_s3d.color_atoms,
                 &parent_s3d.gasteiger_charges,
+                &parent_s3d.color_atoms,
                 &cmol,
                 &c_s3d.coords3d,
-                &c_s3d.color_atoms,
                 &c_s3d.gasteiger_charges,
-                0,
+                &c_s3d.color_atoms,
             );
 
             // Evaluate locked analog's own rotatable dihedrals and total TEU in the aligned bioactive pose
@@ -1652,7 +1651,7 @@ fn compute_centered_heavy_rmsd(mol: &Molecule, a: &[[f32; 3]], b: &[[f32; 3]]) -
     if n == 0 {
         return 0.0;
     }
-    let aligned_b = crate::conformer3d::kabsch_align_3d(a, b);
+    let (_, _, aligned_b, _) = crate::conformer3d::kabsch_align_3d(a, b);
     let mut sq = 0.0_f64;
     let mut cnt = 0usize;
     for idx in 0..n {
@@ -1726,13 +1725,12 @@ pub fn analyze_torsion_strain_and_locks(
                 let rocs = align_rocs_3d(
                     q_mol,
                     &q_s3d.coords3d,
-                    &q_s3d.color_atoms,
                     &q_s3d.gasteiger_charges,
+                    &q_s3d.color_atoms,
                     mol,
                     &free_min_coords3d,
-                    &h_s3d.color_atoms,
                     &charges,
-                    0,
+                    &h_s3d.color_atoms,
                 );
                 let est_dg = -RT_LN10_KCAL * (if mol.pact > 0.5 { mol.pact } else { 7.0 });
                 (

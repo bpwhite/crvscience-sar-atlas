@@ -188,6 +188,7 @@ pub struct PoiExitVector {
     pub prune_atoms: Vec<usize>,
     pub needs_carbonyl_or_ch2_bridge: bool,
     pub label: String,
+    #[serde(skip_deserializing)]
     pub rationale: &'static str,
     pub exposure_score: f64,
 }
@@ -242,7 +243,9 @@ pub struct ProtacCandidate {
     pub rank: usize,
     pub candidate_id: String,
     pub e3_kind: E3RecruiterKind,
+    #[serde(skip_deserializing)]
     pub linker_code: &'static str,
+    #[serde(skip_deserializing)]
     pub linker_name: &'static str,
     pub linker_class: LinkerClass,
     pub linker_atom_span: usize,

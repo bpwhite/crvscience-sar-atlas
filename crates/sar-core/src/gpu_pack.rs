@@ -166,7 +166,7 @@ pub fn pack_gpu_scene(
 
     let max_edges = 24_000usize;
     let packed_edges: Vec<GpuEdgeInstance> = edges
-        .par_iter()
+        .iter()
         .filter(|e| {
             let va = visible_mask.get(e.mol_a).copied().unwrap_or(true);
             let vb = visible_mask.get(e.mol_b).copied().unwrap_or(true);

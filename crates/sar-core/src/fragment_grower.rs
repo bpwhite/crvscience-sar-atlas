@@ -326,8 +326,11 @@ pub struct EfficiencyMetrics {
 pub struct GrownFragmentCandidate {
     pub rank: usize,
     pub candidate_id: String,
+    #[serde(skip_deserializing)]
     pub synthon_code: &'static str,
+    #[serde(skip_deserializing)]
     pub synthon_name: &'static str,
+    #[serde(skip_deserializing)]
     pub coupling_reaction: &'static str,
     pub pocket_role: GrowthPocketRole,
     pub vector_idx: usize,
@@ -630,7 +633,7 @@ pub fn evaluate_rule_of_three_audit(mol: &Molecule) -> RuleOfThreeAudit {
 
     let seed_le = RT_LN10_KCAL * pact / (hac as f64);
     let seed_lle = pact - phys.clogp;
-    let seed_lle_74 = pact - pka.logd_74;
+    let seed_lle_74 = pact - pka.microstate_logd_74;
     let seed_sile = RT_LN10_KCAL * pact / (hac as f64).powf(0.30);
 
     // Astex Fragment Sociability [0..100]: rewards multiple chemically distinct exit vectors + tractable SAScore
@@ -651,7 +654,7 @@ pub fn evaluate_rule_of_three_audit(mol: &Molecule) -> RuleOfThreeAudit {
         heavy_atoms: phys.heavy_atoms,
         mw: phys.mw,
         clogp: phys.clogp,
-        logd_74: pka.logd_74,
+        logd_74: pka.microstate_logd_74,
         hbd: phys.hbd,
         hba: phys.hba,
         rotatable_bonds: phys.rotatable_bonds,
@@ -1371,7 +1374,7 @@ pub fn grow_fragment_along_vector(
         let ge = RT_LN10_KCAL * eff_delta_pact / (delta_hac as f64);
         let lle = predicted_pact - phys.clogp;
         let delta_lle = lle - ro3_audit.seed_lle;
-        let lle_74 = predicted_pact - pka.logd_74;
+        let lle_74 = predicted_pact - pka.microstate_logd_74;
         let sile = RT_LN10_KCAL * predicted_pact / (grown_hac as f64).powf(0.30);
 
         let regime = if ge >= 0.35 && delta_lle >= -0.25 && alerts.is_empty() {
@@ -1440,7 +1443,7 @@ pub fn grow_fragment_along_vector(
             },
             regime,
             physchem: phys,
-            logd_74: pka.logd_74,
+            logd_74: pka.microstate_logd_74,
             sa_score: sa.sa_score,
             optimizer_score,
             canonical_smiles: grown_mol.smiles.clone(),
@@ -1559,7 +1562,7 @@ pub fn format_grown_fragments_sdf(cands: &[GrownFragmentCandidate]) -> String {
             ("OPTIMIZER_SCORE", format!("{:.1}", c.optimizer_score)),
         ];
         let extra_refs: Vec<(&str, String)> = extra.into_iter().collect();
-        let mut rec = format_sdf_record(&c.mol, &c.physchem);
+        let mut rec = format_sdf_record(&c.mol);
         if let Some(pos) = rec.rfind("$$$$") {
             let mut tag_block = String::new();
             for (k, v) in &extra_refs {
