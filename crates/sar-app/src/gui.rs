@@ -146,113 +146,111 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum WorkbenchDomain {
-    LandscapeAndSar,
-    MolecularDesign,
-    SynthesisAndData,
-    BiophysicsAnd3d,
-    AdmetAndPk,
+    SeriesAndSar,
+    CliffsAndMmp,
+    PocketAndBiophysics,
+    OralPbpkAndAdmet,
+    RbfePerturbationNetwork,
 }
 
 impl WorkbenchDomain {
     const ALL: [Self; 5] = [
-        Self::LandscapeAndSar,
-        Self::MolecularDesign,
-        Self::SynthesisAndData,
-        Self::BiophysicsAnd3d,
-        Self::AdmetAndPk,
+        Self::SeriesAndSar,
+        Self::CliffsAndMmp,
+        Self::PocketAndBiophysics,
+        Self::OralPbpkAndAdmet,
+        Self::RbfePerturbationNetwork,
     ];
 
     fn index(self) -> usize {
         match self {
-            Self::LandscapeAndSar => 0,
-            Self::MolecularDesign => 1,
-            Self::SynthesisAndData => 2,
-            Self::BiophysicsAnd3d => 3,
-            Self::AdmetAndPk => 4,
+            Self::SeriesAndSar => 0,
+            Self::CliffsAndMmp => 1,
+            Self::PocketAndBiophysics => 2,
+            Self::OralPbpkAndAdmet => 3,
+            Self::RbfePerturbationNetwork => 4,
         }
     }
 
     fn pill_label(self) -> &'static str {
         match self {
-            Self::LandscapeAndSar => "1. Landscape, SAR & QSAR",
-            Self::MolecularDesign => "2. Molecular & Fragment Design",
-            Self::SynthesisAndData => "3. Synthesis, Funnel & Data",
-            Self::BiophysicsAnd3d => "4. 3D, ESP, WaterMap & Sculpt",
-            Self::AdmetAndPk => "5. ADMET & PBPK",
+            Self::SeriesAndSar => "1. Series & SAR",
+            Self::CliffsAndMmp => "2. Activity Cliffs (SALI) & MMP",
+            Self::PocketAndBiophysics => "3. 3D Pocket & Biophysics",
+            Self::OralPbpkAndAdmet => "4. Oral PBPK & ADMET",
+            Self::RbfePerturbationNetwork => "5. RBFE Perturbation Network",
         }
     }
 
     fn menu_label(self) -> &'static str {
         match self {
-            Self::LandscapeAndSar => "1. Landscape, SAR & Active QSAR (6)",
-            Self::MolecularDesign => "2. Molecular & Fragment Design (7)",
-            Self::SynthesisAndData => "3. Synthesis, Funnel & Dossier (7)",
-            Self::BiophysicsAnd3d => "4. 3D, ESP, WaterMap & Sculpt (15)",
-            Self::AdmetAndPk => "5. ADMET, CYP & PBPK (4)",
+            Self::SeriesAndSar => "1. Series & SAR (15)",
+            Self::CliffsAndMmp => "2. Activity Cliffs (SALI) & MMP (4)",
+            Self::PocketAndBiophysics => "3. 3D Pocket & Biophysics (14)",
+            Self::OralPbpkAndAdmet => "4. Oral PBPK & ADMET (5)",
+            Self::RbfePerturbationNetwork => "5. RBFE Perturbation Network (1)",
         }
     }
 
     fn rgb(self) -> [u8; 3] {
         match self {
-            Self::LandscapeAndSar => [56, 189, 248],  // Sky Blue
-            Self::MolecularDesign => [52, 211, 153],  // Emerald
-            Self::SynthesisAndData => [192, 132, 252], // Violet
-            Self::BiophysicsAnd3d => [244, 114, 182], // Pink
-            Self::AdmetAndPk => [251, 191, 36],       // Amber
+            Self::SeriesAndSar => [56, 189, 248],          // Sky Blue
+            Self::CliffsAndMmp => [52, 211, 153],          // Emerald
+            Self::PocketAndBiophysics => [244, 114, 182],  // Pink
+            Self::OralPbpkAndAdmet => [251, 191, 36],      // Amber
+            Self::RbfePerturbationNetwork => [192, 132, 252], // Violet
         }
     }
 
     fn tabs(self) -> &'static [WorkbenchTab] {
         match self {
-            Self::LandscapeAndSar => &[
-                WorkbenchTab::SaliViewport,
+            Self::SeriesAndSar => &[
                 WorkbenchTab::StructureGrid,
-                WorkbenchTab::MurckoScaffolds,
-                WorkbenchTab::MatchedPairs,
                 WorkbenchTab::SarMatrix,
-                WorkbenchTab::ActiveLearningStudio,
-            ],
-            Self::MolecularDesign => &[
+                WorkbenchTab::MurckoScaffolds,
+                WorkbenchTab::McsSeriesAligner,
                 WorkbenchTab::Sketcher,
                 WorkbenchTab::DeNovoGenerator,
                 WorkbenchTab::FragmentGrower,
-                WorkbenchTab::FragmentLinkerStudio,
                 WorkbenchTab::BioisostereGen,
                 WorkbenchTab::Macrocyclizer,
                 WorkbenchTab::ProtacAndBro5,
-            ],
-            Self::SynthesisAndData => &[
                 WorkbenchTab::SynthAndBrics,
                 WorkbenchTab::BricsHybrids,
                 WorkbenchTab::ParallelLibStudio,
-                WorkbenchTab::McsSeriesAligner,
                 WorkbenchTab::ChemblAndDbStudio,
-                WorkbenchTab::DiscoveryFunnelStudio,
                 WorkbenchTab::CampaignDossier,
             ],
-            Self::BiophysicsAnd3d => &[
-                WorkbenchTab::PublicPdbFetchStudio,
+            Self::CliffsAndMmp => &[
+                WorkbenchTab::SaliViewport,
+                WorkbenchTab::MatchedPairs,
+                WorkbenchTab::ActiveLearningStudio,
+                WorkbenchTab::DiscoveryFunnelStudio,
+            ],
+            Self::PocketAndBiophysics => &[
                 WorkbenchTab::PocketCavityStudio,
-                WorkbenchTab::InducedFitStudio,
-                WorkbenchTab::HBondNetworkStudio,
                 WorkbenchTab::WaterMapSolvationStudio,
                 WorkbenchTab::ElectrostaticsEspStudio,
-                WorkbenchTab::FolditSculptStudio,
+                WorkbenchTab::HBondNetworkStudio,
+                WorkbenchTab::InducedFitStudio,
                 WorkbenchTab::SelectivityStudio,
                 WorkbenchTab::AllostericStudio,
-                WorkbenchTab::RbfeNetworkStudio,
+                WorkbenchTab::PublicPdbFetchStudio,
+                WorkbenchTab::FolditSculptStudio,
+                WorkbenchTab::FragmentLinkerStudio,
                 WorkbenchTab::TorsionStrainStudio,
                 WorkbenchTab::Shape3dAndRocs,
                 WorkbenchTab::PharmacophoreAlign,
-                WorkbenchTab::PkaAndProtomers,
                 WorkbenchTab::CovalentWarheads,
             ],
-            Self::AdmetAndPk => &[
+            Self::OralPbpkAndAdmet => &[
+                WorkbenchTab::OralPbpkAndKpuu,
                 WorkbenchTab::AdmetBoiledEgg,
                 WorkbenchTab::CypAndMetabolites,
                 WorkbenchTab::ProdrugStudio,
-                WorkbenchTab::OralPbpkAndKpuu,
+                WorkbenchTab::PkaAndProtomers,
             ],
+            Self::RbfePerturbationNetwork => &[WorkbenchTab::RbfeNetworkStudio],
         }
     }
 }
@@ -345,45 +343,45 @@ impl WorkbenchTab {
 
     fn domain(self) -> WorkbenchDomain {
         match self {
-            Self::SaliViewport
-            | Self::StructureGrid
-            | Self::MurckoScaffolds
-            | Self::MatchedPairs
+            Self::StructureGrid
             | Self::SarMatrix
-            | Self::ActiveLearningStudio => WorkbenchDomain::LandscapeAndSar,
-            Self::Sketcher
+            | Self::MurckoScaffolds
+            | Self::McsSeriesAligner
+            | Self::Sketcher
             | Self::DeNovoGenerator
             | Self::FragmentGrower
-            | Self::FragmentLinkerStudio
             | Self::BioisostereGen
             | Self::Macrocyclizer
-            | Self::ProtacAndBro5 => WorkbenchDomain::MolecularDesign,
-            Self::SynthAndBrics
+            | Self::ProtacAndBro5
+            | Self::SynthAndBrics
             | Self::BricsHybrids
             | Self::ParallelLibStudio
-            | Self::McsSeriesAligner
             | Self::ChemblAndDbStudio
-            | Self::DiscoveryFunnelStudio
-            | Self::CampaignDossier => WorkbenchDomain::SynthesisAndData,
-            Self::PublicPdbFetchStudio
-            | Self::PocketCavityStudio
-            | Self::InducedFitStudio
-            | Self::HBondNetworkStudio
+            | Self::CampaignDossier => WorkbenchDomain::SeriesAndSar,
+            Self::SaliViewport
+            | Self::MatchedPairs
+            | Self::ActiveLearningStudio
+            | Self::DiscoveryFunnelStudio => WorkbenchDomain::CliffsAndMmp,
+            Self::PocketCavityStudio
             | Self::WaterMapSolvationStudio
             | Self::ElectrostaticsEspStudio
-            | Self::FolditSculptStudio
+            | Self::HBondNetworkStudio
+            | Self::InducedFitStudio
             | Self::SelectivityStudio
             | Self::AllostericStudio
-            | Self::RbfeNetworkStudio
+            | Self::PublicPdbFetchStudio
+            | Self::FolditSculptStudio
+            | Self::FragmentLinkerStudio
             | Self::TorsionStrainStudio
             | Self::Shape3dAndRocs
             | Self::PharmacophoreAlign
-            | Self::PkaAndProtomers
-            | Self::CovalentWarheads => WorkbenchDomain::BiophysicsAnd3d,
-            Self::AdmetBoiledEgg
+            | Self::CovalentWarheads => WorkbenchDomain::PocketAndBiophysics,
+            Self::OralPbpkAndKpuu
+            | Self::AdmetBoiledEgg
             | Self::CypAndMetabolites
             | Self::ProdrugStudio
-            | Self::OralPbpkAndKpuu => WorkbenchDomain::AdmetAndPk,
+            | Self::PkaAndProtomers => WorkbenchDomain::OralPbpkAndAdmet,
+            Self::RbfeNetworkStudio => WorkbenchDomain::RbfePerturbationNetwork,
         }
     }
 
@@ -556,8 +554,51 @@ pub fn run_gui(ds: DatasetAnalysis, vsync: bool) -> eframe::Result<()> {
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CampaignSeriesPreset {
+    Egfr1m17,
+    Drd26cm4,
+    Cox23ln1,
+    AllLoaded,
+    CustomTarget,
+}
+
+#[derive(Clone, Debug)]
+struct ActiveCampaignWorkspace {
+    preset: CampaignSeriesPreset,
+    #[allow(dead_code)]
+    target_name: String,
+    pdb_id: String,
+    title: String,
+    series_count: usize,
+}
+
+impl Default for ActiveCampaignWorkspace {
+    fn default() -> Self {
+        Self {
+            preset: CampaignSeriesPreset::Egfr1m17,
+            target_name: "EGFR".to_string(),
+            pdb_id: "1M17".to_string(),
+            title: "EGFR Kinase Campaign".to_string(),
+            series_count: 8,
+        }
+    }
+}
+
+impl ActiveCampaignWorkspace {
+    fn badge_text(&self) -> String {
+        format!("{} • PDB {} • n={}", self.title, self.pdb_id, self.series_count)
+    }
+}
+
+#[allow(dead_code)]
+pub type SarAtlasApp = SarAtlasGuiApp;
+
 pub struct SarAtlasGuiApp {
     ds: DatasetAnalysis,
+    campaign_workspace: ActiveCampaignWorkspace,
+    campaign_ds_cache_key: String,
+    campaign_ds_cache: Option<DatasetAnalysis>,
     wgpu_ready: bool,
     active_tab: WorkbenchTab,
     last_tab_per_domain: [WorkbenchTab; 5],
@@ -1101,10 +1142,29 @@ impl SarAtlasGuiApp {
                 )
             });
 
+        let default_target = if ds.mols.iter().any(|m| m.target == "EGFR") {
+            "EGFR".to_string()
+        } else if let Some(first) = ds.mols.first() {
+            if !first.target.trim().is_empty() {
+                first.target.clone()
+            } else {
+                "All".to_string()
+            }
+        } else {
+            "All".to_string()
+        };
+
         let seed_idx = ds
             .mols
             .iter()
-            .position(|m| m.id == "NSC693255")
+            .enumerate()
+            .filter(|(_, m)| default_target == "All" || m.target == default_target)
+            .max_by(|(_, a), (_, b)| {
+                a.pact
+                    .partial_cmp(&b.pact)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, _)| i)
             .unwrap_or(0);
         let sketcher = if !ds.mols.is_empty() {
             MolecularSketcher::from_dataset_compound(&ds, seed_idx)
@@ -1126,21 +1186,24 @@ impl SarAtlasGuiApp {
 
         let mut app = Self {
             ds,
+            campaign_workspace: ActiveCampaignWorkspace::default(),
+            campaign_ds_cache_key: String::new(),
+            campaign_ds_cache: None,
             wgpu_ready,
             active_tab: WorkbenchTab::SaliViewport,
             last_tab_per_domain: [
+                WorkbenchTab::StructureGrid,
                 WorkbenchTab::SaliViewport,
-                WorkbenchTab::Sketcher,
-                WorkbenchTab::SynthAndBrics,
-                WorkbenchTab::Shape3dAndRocs,
+                WorkbenchTab::PocketCavityStudio,
                 WorkbenchTab::OralPbpkAndKpuu,
+                WorkbenchTab::RbfeNetworkStudio,
             ],
             recent_tabs: vec![
                 WorkbenchTab::SaliViewport,
-                WorkbenchTab::Sketcher,
-                WorkbenchTab::FragmentGrower,
-                WorkbenchTab::ProdrugStudio,
+                WorkbenchTab::StructureGrid,
+                WorkbenchTab::PocketCavityStudio,
                 WorkbenchTab::OralPbpkAndKpuu,
+                WorkbenchTab::RbfeNetworkStudio,
             ],
             show_left_panel: true,
             show_right_panel: true,
@@ -1158,7 +1221,7 @@ impl SarAtlasGuiApp {
             smarts_results: Vec::new(),
             smarts_hit_mask: Vec::new(),
             smarts_hit_count: 0,
-            target_filter: "All".to_string(),
+            target_filter: default_target,
             scaffold_filter: None,
             hide_pains: false,
             pareto_only: false,
@@ -1581,7 +1644,7 @@ impl SarAtlasGuiApp {
             heatmap_alpha: 0.62,
             color_mode: NodeColorMode::PotencyViridis,
             cliffs_only_edges: false,
-            selected_mol: 0,
+            selected_mol: seed_idx,
             compare_pair: None,
             visible_mask: vec![true; n],
             gpu_nodes: Arc::new(Vec::new()),
@@ -1596,9 +1659,7 @@ impl SarAtlasGuiApp {
         };
         app.recompute_smarts();
         app.refresh_sketch_report();
-        app.run_brics_recombination();
-        app.recompute_series_mcs();
-        app.rebuild_visibility_and_gpu();
+        app.sync_studios_to_active_campaign();
         app
     }
 
@@ -1666,17 +1727,11 @@ impl SarAtlasGuiApp {
         }
 
         self.sketch_cached_rev = 0;
+        self.campaign_ds_cache_key.clear();
+        self.campaign_ds_cache = None;
         self.recompute_smarts();
-        self.refresh_sketch_report();
-        if let Some(m0) = self.ds.mols.first().cloned() {
-            let lbl = format!("{} ({})", m0.name, m0.target);
-            self.bio_analogs = generate_bioisosteres(&m0, &self.ds, self.fw_matrix.as_ref());
-            self.bio_source_label = lbl;
-        }
-        self.scene_dirty = true;
-        self.heatmap_dirty = true;
+        self.sync_studios_to_active_campaign();
         self.status_banner = source_label;
-        self.rebuild_visibility_and_gpu();
     }
 
     fn start_async_discovery_funnel(&mut self) {
@@ -1862,6 +1917,480 @@ impl SarAtlasGuiApp {
         self.sketch_cached_rev = self.sketcher.revision;
     }
 
+    fn active_campaign_dataset(&mut self) -> DatasetAnalysis {
+        if self.target_filter == "All" || self.ds.mols.is_empty() {
+            return self.ds.clone();
+        }
+        let key = format!(
+            "{}|{}|{:.3}|{:.2}",
+            self.target_filter,
+            self.ds.mols.len(),
+            self.ds.min_tanimoto,
+            self.ds.sali_cliff_threshold
+        );
+        if self.campaign_ds_cache_key == key {
+            if let Some(ref cached) = self.campaign_ds_cache {
+                return cached.clone();
+            }
+        }
+        let subset: Vec<Molecule> = self
+            .ds
+            .mols
+            .iter()
+            .filter(|m| m.target == self.target_filter)
+            .cloned()
+            .collect();
+        let out = if subset.is_empty() {
+            self.ds.clone()
+        } else {
+            DatasetAnalysis::from_molecules(
+                subset,
+                self.ds.min_tanimoto,
+                self.ds.sali_cliff_threshold,
+            )
+        };
+        self.campaign_ds_cache_key = key;
+        self.campaign_ds_cache = Some(out.clone());
+        out
+    }
+
+    fn invalidate_lead_specific_caches(&mut self) {
+        self.dossier_cached_key.clear();
+        self.pbpk_cached_key.clear();
+        self.wm_cached_key.clear();
+        self.esp_cached_key.clear();
+        self.pocket_pose_cached_key.clear();
+        self.sel_focus_cached_key.clear();
+        self.allo_focus_cached_key.clear();
+        self.torsion_cached_key.clear();
+        self.hbn_cached_key.clear();
+        self.ifd_cached_key.clear();
+        self.prodrug_cached_key.clear();
+        self.flink_cached_key.clear();
+        if self.sculpt_preset == SculptPuzzlePreset::CustomPdbFreeformSandbox {
+            self.sculpt_session = None;
+        }
+    }
+
+    fn is_active_lead_id(&self, id: &str) -> bool {
+        self.ds
+            .mols
+            .get(self.selected_mol)
+            .map(|m| m.id == id)
+            .unwrap_or(false)
+    }
+
+    fn select_mol_by_id_or_idx(&mut self, id: &str, fallback_idx: usize) {
+        let resolved = self
+            .ds
+            .mols
+            .iter()
+            .position(|m| m.id == id)
+            .unwrap_or(fallback_idx);
+        self.select_active_lead(resolved);
+    }
+
+    pub fn select_active_lead(&mut self, mol_idx: usize) {
+        if self.ds.mols.is_empty() {
+            self.selected_mol = 0;
+            return;
+        }
+        let idx = mol_idx.min(self.ds.mols.len() - 1);
+        self.selected_mol = idx;
+        self.invalidate_lead_specific_caches();
+        if let Some(m) = self.ds.mols.get(idx).cloned() {
+            self.bio_source_label = format!("{} ({})", m.name, m.target);
+            self.bio_analogs = generate_bioisosteres(&m, &self.ds, self.fw_matrix.as_ref());
+            self.pbpk_report = Some(simulate_oral_pbpk(
+                &m,
+                PbpkDosingConfig {
+                    dose_mg: self.pbpk_dose_mg as f64,
+                    regimen: self.pbpk_regimen,
+                    prandial: self.pbpk_prandial,
+                    inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+                },
+            ));
+        }
+        if self.target_filter == "All" {
+            self.sync_studios_to_active_campaign();
+        } else {
+            self.scene_dirty = true;
+            self.rebuild_visibility_and_gpu();
+        }
+    }
+
+    fn switch_campaign(&mut self, target_filter: &str) {
+        self.target_filter = target_filter.to_string();
+        self.scaffold_filter = None;
+        self.pan = [0.0, 0.0];
+        self.zoom = 0.95;
+        self.campaign_ds_cache_key.clear();
+        self.campaign_ds_cache = None;
+        self.sync_studios_to_active_campaign();
+        self.status_banner = format!(
+            "Active campaign synced -> {}",
+            self.campaign_workspace.badge_text()
+        );
+    }
+
+    fn step_active_lead(&mut self, delta: isize) {
+        if self.ds.mols.is_empty() {
+            return;
+        }
+        let mut candidates: Vec<usize> = (0..self.ds.mols.len())
+            .filter(|&i| self.visible_mask.get(i).copied().unwrap_or(true))
+            .collect();
+        if candidates.is_empty() {
+            candidates = (0..self.ds.mols.len())
+                .filter(|&i| {
+                    self.target_filter == "All" || self.ds.mols[i].target == self.target_filter
+                })
+                .collect();
+        }
+        if candidates.is_empty() {
+            candidates = (0..self.ds.mols.len()).collect();
+        }
+        let cur_pos = candidates
+            .iter()
+            .position(|&i| i == self.selected_mol)
+            .unwrap_or(0);
+        let len = candidates.len() as isize;
+        let next_pos = ((cur_pos as isize + delta).rem_euclid(len)) as usize;
+        self.select_active_lead(candidates[next_pos]);
+    }
+
+    pub fn sync_studios_to_active_campaign(&mut self) {
+        let n = self.ds.mols.len();
+        if n == 0 {
+            self.campaign_workspace = ActiveCampaignWorkspace {
+                preset: CampaignSeriesPreset::AllLoaded,
+                target_name: "All".to_string(),
+                pdb_id: "Multi-Target".to_string(),
+                title: "Empty Workspace".to_string(),
+                series_count: 0,
+            };
+            self.visible_mask.clear();
+            return;
+        }
+
+        // 1. Ensure selected_mol belongs to the active target series when filtered.
+        if self.target_filter != "All" {
+            let current_ok = self
+                .ds
+                .mols
+                .get(self.selected_mol)
+                .map(|m| m.target == self.target_filter)
+                .unwrap_or(false);
+            if !current_ok {
+                if let Some((best_idx, _)) = self
+                    .ds
+                    .mols
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| m.target == self.target_filter)
+                    .max_by(|(_, a), (_, b)| {
+                        a.pact
+                            .partial_cmp(&b.pact)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                {
+                    self.selected_mol = best_idx;
+                }
+            }
+        } else if self.selected_mol >= n {
+            self.selected_mol = 0;
+        }
+
+        let series_count = if self.target_filter == "All" {
+            n
+        } else {
+            self.ds
+                .mols
+                .iter()
+                .filter(|m| m.target == self.target_filter)
+                .count()
+                .max(1)
+        };
+
+        let effective_target = if self.target_filter != "All" {
+            self.target_filter.clone()
+        } else {
+            self.ds
+                .mols
+                .get(self.selected_mol)
+                .map(|m| m.target.clone())
+                .unwrap_or_else(|| "EGFR".to_string())
+        };
+        let tok = effective_target.to_ascii_uppercase();
+        let is_drd2 = tok.contains("DRD") || tok.contains("D2") || tok.contains("DOPAMINE");
+        let is_cox2 = tok.contains("COX") || tok.contains("PTGS");
+
+        self.campaign_workspace = if self.target_filter == "All" {
+            ActiveCampaignWorkspace {
+                preset: CampaignSeriesPreset::AllLoaded,
+                target_name: "All".to_string(),
+                pdb_id: "Multi-Target".to_string(),
+                title: "All Loaded Molecules".to_string(),
+                series_count,
+            }
+        } else if is_drd2 {
+            ActiveCampaignWorkspace {
+                preset: CampaignSeriesPreset::Drd26cm4,
+                target_name: self.target_filter.clone(),
+                pdb_id: "6CM4".to_string(),
+                title: "Dopamine D2 Campaign".to_string(),
+                series_count,
+            }
+        } else if is_cox2 {
+            ActiveCampaignWorkspace {
+                preset: CampaignSeriesPreset::Cox23ln1,
+                target_name: self.target_filter.clone(),
+                pdb_id: "3LN1".to_string(),
+                title: "COX-2 Coxibs Campaign".to_string(),
+                series_count,
+            }
+        } else if tok.contains("EGFR") {
+            ActiveCampaignWorkspace {
+                preset: CampaignSeriesPreset::Egfr1m17,
+                target_name: self.target_filter.clone(),
+                pdb_id: "1M17".to_string(),
+                title: "EGFR Kinase Campaign".to_string(),
+                series_count,
+            }
+        } else {
+            ActiveCampaignWorkspace {
+                preset: CampaignSeriesPreset::CustomTarget,
+                target_name: self.target_filter.clone(),
+                pdb_id: "Custom".to_string(),
+                title: format!("{} Campaign", self.target_filter),
+                series_count,
+            }
+        };
+
+        // 2. Sync 3D Pocket, DEL/Parallel Lib, WaterMap, ESP, Selectivity, HBond, InducedFit
+        let pocket_idx = if is_drd2 {
+            1
+        } else if is_cox2 {
+            2
+        } else {
+            0
+        };
+        self.pocket_preset_idx = pocket_idx;
+        self.pocket_custom_pdb_raw = None;
+        self.pocket_use_sketcher_lig = false;
+        self.pocket_rcsb_code_buf = CURATED_PDB_POCKETS[pocket_idx].pdb_id.to_string();
+        if pocket_idx == 0 {
+            self.pocket_pdb_path_buf = "data/egfr_1m17_pocket.pdb".to_string();
+        }
+        self.pocket_cached_key.clear();
+        self.pocket_screen_cached_key.clear();
+        self.pocket_pose_cached_key.clear();
+        self.plib_pocket_preset_idx = pocket_idx;
+        self.plib_cached_key.clear();
+
+        self.wm_cfg.preset = if is_drd2 {
+            WaterMapPreset::Drd26cm4OrthostericCageHydration
+        } else if is_cox2 {
+            WaterMapPreset::Cox23ln1DewettedHydrophobicChannel
+        } else {
+            WaterMapPreset::Egfr1m17BackPocketAndHingeBridge
+        };
+        self.wm_use_sketcher = false;
+        self.wm_cached_key.clear();
+        self.wm_screen_rows.clear();
+
+        self.esp_cfg.preset = if is_drd2 {
+            EspTargetPreset::Drd26cm4CationPiAromaticCage
+        } else if is_cox2 {
+            EspTargetPreset::Cox23ln1SulfonamideAndChannelEsp
+        } else {
+            EspTargetPreset::Egfr1m17AnilineHalogenAndHingeEsp
+        };
+        self.esp_use_sketcher = false;
+        self.esp_cached_key.clear();
+        self.esp_screen_rows.clear();
+
+        let sel_idx = if is_drd2 {
+            2
+        } else if is_cox2 {
+            0
+        } else {
+            1
+        };
+        self.sel_pair_idx = sel_idx;
+        self.sel_custom_target_raw = None;
+        self.sel_custom_offtarget_raw = None;
+        self.sel_use_sketcher_lig = false;
+        self.sel_mut_tokens_buf = CURATED_SELECTIVITY_PAIRS[sel_idx]
+            .signature_mutations
+            .join(", ");
+        self.sel_dual_cached_key.clear();
+        self.sel_screen_cached_key.clear();
+        self.sel_focus_cached_key.clear();
+        self.sel_mut_scan = None;
+
+        self.hbn_cfg.preset = if is_drd2 {
+            HBondNetworkPreset::Drd26cm4Asp114WaterSaltBridge
+        } else if is_cox2 {
+            HBondNetworkPreset::Cox23ln1His90Gln178Sulfonamide
+        } else {
+            HBondNetworkPreset::Egfr1m17Thr790WaterBridge
+        };
+        self.hbn_use_sketcher = false;
+        self.hbn_cached_key.clear();
+        self.hbn_screen_rows.clear();
+
+        self.ifd_cfg.preset = if is_drd2 {
+            InducedFitPreset::Drd26cm4ToggleSwitchAndCage
+        } else if is_cox2 {
+            InducedFitPreset::Cox23ln1Arg513AndSidePocket
+        } else {
+            InducedFitPreset::Egfr1m17GatekeeperAndBackPocket
+        };
+        self.ifd_use_sketcher = false;
+        self.ifd_cached_key.clear();
+        self.ifd_screen_key.clear();
+        self.ifd_screen_rows.clear();
+
+        // 3. Sync SAR Matrix (Free-Wilson) without clobbering active lead
+        let tf_opt = (self.target_filter != "All").then_some(self.target_filter.as_str());
+        let mut best_fw: Option<(String, String, FreeWilsonMatrix)> = None;
+        for tpl in &CURATED_CORE_TEMPLATES {
+            let tpl_upper = tpl.target_hint.to_ascii_uppercase();
+            let tpl_matches = (is_drd2 && tpl_upper.contains("D2"))
+                || (is_cox2 && tpl_upper.contains("COX"))
+                || (!is_drd2 && !is_cox2 && tpl_upper.contains("EGFR"));
+            if !tpl_matches {
+                continue;
+            }
+            if let Ok(mat) = self.ds.solve_sar_matrix(
+                tpl.name,
+                tpl.smarts,
+                tf_opt,
+                self.fw_max_slots,
+                self.fw_ridge_lambda,
+            ) {
+                let replace = best_fw
+                    .as_ref()
+                    .map(|(_, _, prev)| mat.rows.len() > prev.rows.len())
+                    .unwrap_or(true);
+                if replace {
+                    best_fw = Some((tpl.name.to_string(), tpl.smarts.to_string(), mat));
+                }
+            }
+        }
+        if let Some((nm, sm, mat)) = best_fw {
+            self.fw_core_name = nm;
+            self.fw_core_smarts = sm;
+            self.fw_matrix = Some(mat);
+            self.fw_error = None;
+        } else {
+            self.solve_active_fw_matrix();
+        }
+
+        // 4. Sync Prodrug, Oral PBPK, and RBFE Network (AutoDominantTarget)
+        self.prodrug_source_mode = 1;
+        self.prodrug_handle_idx = 0;
+        self.prodrug_selected_cand_idx = 0;
+        self.prodrug_cached_key.clear();
+
+        self.pbpk_use_sketcher_mol = false;
+        self.pbpk_cached_key.clear();
+        self.pbpk_dataset_cached_key.clear();
+        let camp_ds = self.active_campaign_dataset();
+        self.pbpk_dataset_rows =
+            summarize_dataset_oral_pbpk(&camp_ds.mols, self.pbpk_dose_mg as f64);
+        if let Some(m) = self.ds.mols.get(self.selected_mol) {
+            self.pbpk_report = Some(simulate_oral_pbpk(
+                m,
+                PbpkDosingConfig {
+                    dose_mg: self.pbpk_dose_mg as f64,
+                    regimen: self.pbpk_regimen,
+                    prandial: self.pbpk_prandial,
+                    inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+                },
+            ));
+            self.bio_source_label = format!("{} ({})", m.name, m.target);
+            self.bio_analogs = generate_bioisosteres(m, &self.ds, self.fw_matrix.as_ref());
+        }
+
+        self.rbfe_cfg.series_preset = RbfeSeriesPreset::AutoDominantTarget;
+        self.rbfe_cached_key.clear();
+        self.rbfe_report = None;
+        self.rbfe_selected_edge_idx = 0;
+        self.rbfe_selected_cycle_idx = None;
+
+        // 5. Sync Torsion, Funnel, Linker, Allosteric, Public PDB, Sculpt, MCS, BRICS, Dossier
+        self.torsion_pose_source = BioactivePoseSource::AutoTargetPocket;
+        self.torsion_use_sketcher = false;
+        self.torsion_cached_key.clear();
+        self.torsion_screen_key.clear();
+
+        self.funnel_cfg.preset = if self.target_filter == "All" {
+            DiscoveryFunnelPreset::AutoDatasetCampaign
+        } else if is_drd2 {
+            DiscoveryFunnelPreset::Drd2CnsBbbSelective
+        } else if is_cox2 {
+            DiscoveryFunnelPreset::Cox2IsoformSelective
+        } else {
+            DiscoveryFunnelPreset::EgfrKinasePanMutant
+        };
+        self.funnel_cfg.seed_mol_idx = Some(self.selected_mol.min(n - 1));
+
+        self.flink_cfg.preset = if is_drd2 {
+            FragmentPairPreset::Drd26cm4PiperidineAndBenzisoxazole
+        } else if is_cox2 {
+            FragmentPairPreset::Cox23ln1SulfonamideAndTolyl
+        } else {
+            FragmentPairPreset::Egfr1m17HingeAndBackPocket
+        };
+        self.flink_use_sketcher = false;
+        self.flink_cached_key.clear();
+
+        self.allo_preset_idx = 0;
+        self.allo_use_sketcher_lig = false;
+        self.allo_screen_cached_key.clear();
+        self.allo_focus_cached_key.clear();
+
+        self.pubpdb_cfg.preset = if is_cox2 {
+            PublicTargetPreset::Cox2Rcsb3ln1ExperimentalHolo
+        } else {
+            PublicTargetPreset::EgfrRcsb1m17ExperimentalHolo
+        };
+
+        self.sculpt_preset = if is_cox2 {
+            SculptPuzzlePreset::Cox23ln1SelectivityLatchChallenge
+        } else if is_drd2 {
+            SculptPuzzlePreset::CustomPdbFreeformSandbox
+        } else {
+            SculptPuzzlePreset::Egfr1m17GatekeeperBarrierChallenge
+        };
+        self.sculpt_session = None;
+
+        self.mcs_scope_target = effective_target;
+        self.brics_cfg.target_filter = if self.target_filter == "All" {
+            "All".to_string()
+        } else {
+            self.target_filter.clone()
+        };
+        self.dossier_profile = if is_drd2 {
+            CampaignTargetProfile::OralCnsPenetrant
+        } else {
+            CampaignTargetProfile::OralPeripheral
+        };
+        self.dossier_use_sketcher_mol = false;
+        self.dossier_cached_key.clear();
+        self.dossier_campaign_cached_key.clear();
+        self.al_cached_key.clear();
+        self.sketch_cached_rev = 0;
+        self.refresh_sketch_report();
+        self.run_brics_recombination();
+        self.recompute_series_mcs();
+        self.scene_dirty = true;
+        self.heatmap_dirty = true;
+        self.rebuild_visibility_and_gpu();
+    }
+
     fn replace_dataset(&mut self, new_ds: DatasetAnalysis, label: impl Into<String>) {
         self.fw_matrix = new_ds.default_sar_matrix.clone();
         if let Some(m) = &self.fw_matrix {
@@ -1870,58 +2399,32 @@ impl SarAtlasGuiApp {
         }
         self.fw_error = None;
         self.ds = new_ds;
+        self.campaign_ds_cache_key.clear();
+        self.campaign_ds_cache = None;
         self.selected_mol = 0;
         self.compare_pair = None;
         self.scaffold_filter = None;
-        self.target_filter = "All".to_string();
+        self.target_filter = if self.ds.mols.iter().any(|m| m.target == "EGFR") {
+            "EGFR".to_string()
+        } else if let Some(first) = self.ds.mols.first() {
+            if !first.target.trim().is_empty() {
+                first.target.clone()
+            } else {
+                "All".to_string()
+            }
+        } else {
+            "All".to_string()
+        };
         self.pan = [0.0, 0.0];
         self.zoom = 0.95;
         self.sketch_cached_rev = 0;
         self.recompute_smarts();
-        self.refresh_sketch_report();
-        if let Some(m0) = self.ds.mols.first().cloned() {
-            let lbl = format!("{} ({})", m0.name, m0.target);
-            self.bio_analogs = generate_bioisosteres(&m0, &self.ds, self.fw_matrix.as_ref());
-            self.bio_source_label = lbl;
-        }
-        if let Some(m0) = self.ds.mols.first() {
-            self.mcs_scope_target = m0.target.clone();
-        }
         self.conf3d_cached_key.clear();
         self.protac_cached_key.clear();
-        self.dossier_cached_key.clear();
-        self.dossier_campaign_cached_key.clear();
         self.denovo_cached_key.clear();
         self.denovo_promoted_seed = None;
-        self.pocket_screen_cached_key.clear();
-        self.pocket_pose_cached_key.clear();
-        self.plib_cached_key.clear();
-        self.sel_screen_cached_key.clear();
-        self.sel_focus_cached_key.clear();
-        self.allo_screen_cached_key.clear();
-        self.allo_focus_cached_key.clear();
-        self.al_cached_key.clear();
-        self.rbfe_cached_key.clear();
-        self.torsion_cached_key.clear();
-        self.torsion_screen_key.clear();
-        self.flink_cached_key.clear();
-        self.ifd_cached_key.clear();
-        self.ifd_screen_key.clear();
-        self.hbn_cached_key.clear();
-        self.hbn_screen_rows.clear();
-        self.wm_cached_key.clear();
-        self.wm_screen_rows.clear();
-        self.esp_cached_key.clear();
-        self.esp_screen_rows.clear();
-        if self.sculpt_preset == SculptPuzzlePreset::CustomPdbFreeformSandbox {
-            self.sculpt_session = None;
-        }
-        self.run_brics_recombination();
-        self.recompute_series_mcs();
-        self.scene_dirty = true;
-        self.heatmap_dirty = true;
+        self.sync_studios_to_active_campaign();
         self.status_banner = label.into();
-        self.rebuild_visibility_and_gpu();
     }
 
     fn solve_active_fw_matrix(&mut self) {
@@ -1938,9 +2441,12 @@ impl SarAtlasGuiApp {
             self.fw_ridge_lambda,
         ) {
             Ok(mat) => {
-                if let Some(first_row) = mat.rows.first() {
-                    self.selected_mol = first_row.mol_idx;
-                    self.scene_dirty = true;
+                let keep_sel = mat.rows.iter().any(|r| r.mol_idx == self.selected_mol);
+                if !keep_sel {
+                    if let Some(first_row) = mat.rows.first() {
+                        self.selected_mol = first_row.mol_idx;
+                        self.scene_dirty = true;
+                    }
                 }
                 self.fw_matrix = Some(mat);
                 self.fw_error = None;
@@ -2038,18 +2544,31 @@ impl SarAtlasGuiApp {
             {
                 ok = false;
             }
-            if !q.is_empty()
-                && !m.name.to_ascii_lowercase().contains(&q)
-                && !m.id.to_ascii_lowercase().contains(&q)
-                && !m.smiles.to_ascii_lowercase().contains(&q)
-            {
-                ok = false;
+            if !q.is_empty() {
+                let scaffold_hit = self.ds.scaffolds.iter().any(|sc| {
+                    sc.member_mols.contains(&i)
+                        && (sc.framework_label.to_ascii_lowercase().contains(&q)
+                            || sc.generic_skeleton_key.to_ascii_lowercase().contains(&q))
+                });
+                if !m.name.to_ascii_lowercase().contains(&q)
+                    && !m.id.to_ascii_lowercase().contains(&q)
+                    && !m.target.to_ascii_lowercase().contains(&q)
+                    && !m.smiles.to_ascii_lowercase().contains(&q)
+                    && !scaffold_hit
+                {
+                    ok = false;
+                }
             }
             self.visible_mask[i] = ok;
         }
 
         if self.selected_mol >= n {
             self.selected_mol = 0;
+        }
+        if !self.visible_mask.is_empty() && !self.visible_mask[self.selected_mol] {
+            if let Some(first_vis) = self.visible_mask.iter().position(|&v| v) {
+                self.selected_mol = first_vis;
+            }
         }
 
         let spotlight_mask = if has_valid_smarts {
@@ -2120,6 +2639,8 @@ impl SarAtlasGuiApp {
 
         egui::TopBottomPanel::top("sar_v2_menu_and_ribbon").show(ctx, |ui| {
             self.render_top_menu_bar(ui);
+            ui.separator();
+            self.render_active_campaign_workspace_bar(ui);
             ui.separator();
             self.render_domain_navigation_ribbon(ui);
             if self.show_filter_drawer && !self.zen_canvas_mode {
@@ -2796,71 +3317,20 @@ impl SarAtlasGuiApp {
 
                 ui.horizontal_wrapped(|ui| {
                     ui.small("Quick:");
-                    if ui.small_button("DEL / Lib").clicked() {
-                        open_plib_tab = true;
-                    }
-                    if ui.small_button("3D ESP").clicked() {
-                        open_esp_tab = true;
-                    }
-                    if ui.small_button("Public PDB/AFDB").clicked() {
-                        open_pubpdb_tab = true;
-                    }
-                    if ui.small_button("3D Sculpt").clicked() {
-                        open_sculpt_tab = true;
+                    if ui.small_button("PDB Pocket").clicked() {
+                        open_pocket_tab = true;
                     }
                     if ui.small_button("WaterMap").clicked() {
                         open_wm_tab = true;
                     }
-                    if ui.small_button("H-Bond Net").clicked() {
-                        open_hbn_tab = true;
-                    }
-                    if ui.small_button("Induced-Fit").clicked() {
-                        open_ifd_tab = true;
-                    }
-                    if ui.small_button("Frag Link").clicked() {
-                        open_flink_tab = true;
-                    }
-                    if ui.small_button("Funnel").clicked() {
-                        open_funnel_tab = true;
-                    }
-                    if ui.small_button("Torsion Lock").clicked() {
-                        open_torsion_tab = true;
-                    }
-                    if ui.small_button("Lomap RBFE").clicked() {
-                        open_rbfe_tab = true;
-                    }
-                    if ui.small_button("Active QSAR").clicked() {
-                        open_al_tab = true;
-                    }
-                    if ui.small_button("Allostery").clicked() {
-                        open_allo_tab = true;
-                    }
-                    if ui.small_button("Selectivity").clicked() {
-                        open_sel_tab = true;
-                    }
-                    if ui.small_button("PDB Pocket").clicked() {
-                        open_pocket_tab = true;
-                    }
-                    if ui.small_button("De Novo").clicked() {
-                        open_denovo_tab = true;
-                    }
-                    if ui.small_button("Grow Ro3").clicked() {
-                        open_frag_tab = true;
-                    }
-                    if ui.small_button("Macrocycle").clicked() {
-                        open_macro_tab = true;
-                    }
-                    if ui.small_button("SMARTCyp").clicked() {
-                        open_cyp_tab = true;
-                    }
-                    if ui.small_button("Prodrug").clicked() {
-                        open_prodrug_tab = true;
+                    if ui.small_button("3D ESP").clicked() {
+                        open_esp_tab = true;
                     }
                     if ui.small_button("Oral PBPK").clicked() {
                         open_pbpk_tab = true;
                     }
-                    if ui.small_button("Dossier").clicked() {
-                        open_dossier_tab = true;
+                    if ui.small_button("Lomap RBFE").clicked() {
+                        open_rbfe_tab = true;
                     }
                 });
 
@@ -3260,8 +3730,7 @@ impl SarAtlasGuiApp {
             self.navigate_to_tab(WorkbenchTab::ElectrostaticsEspStudio);
         }
         if let Some(nb) = clicked_nbr {
-            self.selected_mol = nb;
-            self.scene_dirty = true;
+            self.select_active_lead(nb);
         }
     }
 
@@ -4389,8 +4858,7 @@ impl SarAtlasGuiApp {
         }
 
         if let Some(ci) = clicked_pt {
-            self.selected_mol = ci;
-            self.scene_dirty = true;
+            self.select_active_lead(ci);
         }
 
         ui.add_space(6.0);
@@ -4485,8 +4953,7 @@ impl SarAtlasGuiApp {
         });
 
         if let Some(sel) = next_sel {
-            self.selected_mol = sel;
-            self.scene_dirty = true;
+            self.select_active_lead(sel);
         }
     }
 
@@ -5155,8 +5622,7 @@ impl SarAtlasGuiApp {
                     ));
                 });
                 if response.clicked() {
-                    self.selected_mol = hit;
-                    self.scene_dirty = true;
+                    self.select_active_lead(hit);
                 }
             }
         }
@@ -5240,9 +5706,8 @@ impl SarAtlasGuiApp {
             });
 
         if let Some(target_idx) = jump {
-            self.selected_mol = target_idx;
             self.pan = self.ds.chem_coords[target_idx];
-            self.scene_dirty = true;
+            self.select_active_lead(target_idx);
         }
     }
 
@@ -5333,8 +5798,7 @@ impl SarAtlasGuiApp {
         });
 
         if let Some(c) = clicked {
-            self.selected_mol = c;
-            self.scene_dirty = true;
+            self.select_active_lead(c);
         }
         if let Some(mi) = edit_in_sketch {
             self.send_compound_to_sketcher(mi);
@@ -5349,7 +5813,17 @@ impl SarAtlasGuiApp {
         let mut sketch_req: Option<usize> = None;
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for sc in self.ds.scaffolds.iter().take(60) {
+            for sc in self
+                .ds
+                .scaffolds
+                .iter()
+                .filter(|sc| {
+                    sc.member_mols
+                        .iter()
+                        .any(|&mi| self.visible_mask.get(mi).copied().unwrap_or(true))
+                })
+                .take(60)
+            {
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let r = ui
@@ -5420,8 +5894,7 @@ impl SarAtlasGuiApp {
             self.send_compound_to_sketcher(mi);
         }
         if let Some(mi) = select_req {
-            self.selected_mol = mi;
-            self.scene_dirty = true;
+            self.select_active_lead(mi);
         }
     }
 
@@ -5483,7 +5956,7 @@ impl SarAtlasGuiApp {
                         .iter()
                         .filter(|m| {
                             self.visible_mask.get(m.mol_from).copied().unwrap_or(true)
-                                || self.visible_mask.get(m.mol_to).copied().unwrap_or(true)
+                                && self.visible_mask.get(m.mol_to).copied().unwrap_or(true)
                         })
                         .take(120)
                     {
@@ -5509,8 +5982,7 @@ impl SarAtlasGuiApp {
 
         if let Some((from_i, to_i)) = pair_req {
             self.compare_pair = Some((from_i, to_i));
-            self.selected_mol = to_i;
-            self.scene_dirty = true;
+            self.select_active_lead(to_i);
         }
     }
 }
@@ -11814,9 +12286,12 @@ impl SarAtlasGuiApp {
 
         if let Some(target_id) = jump_id {
             if let Some(pos) = self.ds.mols.iter().position(|m| m.id == target_id) {
-                self.selected_mol = pos;
+                let tgt = self.ds.mols[pos].target.clone();
+                if self.target_filter != "All" && self.target_filter != tgt {
+                    self.switch_campaign(&tgt);
+                }
                 self.cyp_use_sketcher_target = false;
-                self.scene_dirty = true;
+                self.select_active_lead(pos);
             }
         }
 
@@ -15317,10 +15792,16 @@ impl SarAtlasGuiApp {
             self.pbpk_cached_key = cache_key;
         }
 
-        let ds_key = format!("ds_len={}|dose={:.1}", self.ds.mols.len(), self.pbpk_dose_mg);
+        let camp_ds = self.active_campaign_dataset();
+        let ds_key = format!(
+            "ds_len={}|tf={}|dose={:.1}",
+            camp_ds.mols.len(),
+            self.target_filter,
+            self.pbpk_dose_mg
+        );
         if self.pbpk_dataset_cached_key != ds_key {
             self.pbpk_dataset_rows =
-                summarize_dataset_oral_pbpk(&self.ds.mols, self.pbpk_dose_mg as f64);
+                summarize_dataset_oral_pbpk(&camp_ds.mols, self.pbpk_dose_mg as f64);
             self.pbpk_dataset_cached_key = ds_key;
         }
 
@@ -15369,7 +15850,7 @@ impl SarAtlasGuiApp {
 
         ui.separator();
 
-        let mut select_ds_mol: Option<usize> = None;
+        let mut select_ds_mol: Option<(String, usize)> = None;
 
         egui::ScrollArea::vertical()
             .id_salt("oral_pbpk_main_scroll")
@@ -15501,7 +15982,7 @@ impl SarAtlasGuiApp {
 
                                     for r in &self.pbpk_dataset_rows {
                                         let is_sel =
-                                            !self.pbpk_use_sketcher_mol && r.mol_idx == sel_idx;
+                                            !self.pbpk_use_sketcher_mol && self.is_active_lead_id(&r.id);
                                         let [kr, kg, kb] = r.cns_class.rgb();
                                         if ui
                                             .selectable_label(
@@ -15510,7 +15991,7 @@ impl SarAtlasGuiApp {
                                             )
                                             .clicked()
                                         {
-                                            select_ds_mol = Some(r.mol_idx);
+                                            select_ds_mol = Some((r.id.clone(), r.mol_idx));
                                         }
                                         if ui
                                             .selectable_label(
@@ -15519,7 +16000,7 @@ impl SarAtlasGuiApp {
                                             )
                                             .clicked()
                                         {
-                                            select_ds_mol = Some(r.mol_idx);
+                                            select_ds_mol = Some((r.id.clone(), r.mol_idx));
                                         }
                                         ui.monospace(format!("{} ({:.1} nM)", r.target, r.ic50_nm));
                                         ui.monospace(format!("{:.0}%", r.fa_pct));
@@ -15561,10 +16042,9 @@ impl SarAtlasGuiApp {
                 });
             });
 
-        if let Some(mi) = select_ds_mol {
-            self.selected_mol = mi;
+        if let Some((id, mi)) = select_ds_mol {
             self.pbpk_use_sketcher_mol = false;
-            self.scene_dirty = true;
+            self.select_mol_by_id_or_idx(&id, mi);
         }
     }
 }
@@ -16299,6 +16779,117 @@ impl SarAtlasGuiApp {
         }
     }
 
+    fn render_active_campaign_workspace_bar(&mut self, ui: &mut egui::Ui) {
+        let mut switch_to: Option<&'static str> = None;
+        let mut step_delta: isize = 0;
+
+        ui.horizontal_wrapped(|ui| {
+            // Persistent Active Campaign Badge
+            let badge_col = match self.campaign_workspace.preset {
+                CampaignSeriesPreset::Egfr1m17 => Color32::from_rgb(56, 189, 248),
+                CampaignSeriesPreset::Drd26cm4 => Color32::from_rgb(52, 211, 153),
+                CampaignSeriesPreset::Cox23ln1 => Color32::from_rgb(251, 191, 36),
+                CampaignSeriesPreset::AllLoaded => Color32::from_rgb(192, 132, 252),
+                CampaignSeriesPreset::CustomTarget => Color32::from_rgb(244, 114, 182),
+            };
+            ui.label(
+                RichText::new(self.campaign_workspace.badge_text())
+                    .strong()
+                    .size(12.0)
+                    .color(badge_col),
+            );
+            ui.separator();
+
+            // 1-Click Campaign Switcher Pills
+            for (target_key, lbl, preset_kind) in [
+                ("EGFR", "EGFR Kinase (1M17)", CampaignSeriesPreset::Egfr1m17),
+                ("Dopamine D2", "Dopamine D2 (6CM4)", CampaignSeriesPreset::Drd26cm4),
+                ("COX-2", "COX-2 Coxibs (3LN1)", CampaignSeriesPreset::Cox23ln1),
+                (
+                    "All",
+                    "All Loaded Molecules (Multi-Target)",
+                    CampaignSeriesPreset::AllLoaded,
+                ),
+            ] {
+                let active = self.campaign_workspace.preset == preset_kind;
+                let rt = if active {
+                    RichText::new(lbl).strong().size(11.5).color(badge_col)
+                } else {
+                    RichText::new(lbl).size(11.5)
+                };
+                if ui
+                    .selectable_label(active, rt)
+                    .on_hover_text(format!("Switch active target series & sync all studios to {lbl}"))
+                    .clicked()
+                {
+                    switch_to = Some(target_key);
+                }
+            }
+
+            ui.separator();
+
+            // [Active Lead: ◀ BRIDGES-56 (pIC50 | MW | cLogP | QED) ▶]
+            ui.label(RichText::new("Active Lead:").strong().size(11.0));
+            if ui
+                .small_button("◀")
+                .on_hover_text("Previous compound in active series")
+                .clicked()
+            {
+                step_delta = -1;
+            }
+            if !self.ds.mols.is_empty() {
+                let idx = self.selected_mol.min(self.ds.mols.len() - 1);
+                let m = &self.ds.mols[idx];
+                let p = &self.ds.profiles[idx];
+                let lead_txt = format!(
+                    "{} (pIC50 {:.2} | MW {:.0} | cLogP {:.2} | QED {:.2})",
+                    m.id, m.pact, p.mw, p.clogp, p.qed_mean
+                );
+                ui.colored_label(
+                    Color32::from_rgb(241, 245, 249),
+                    RichText::new(lead_txt).monospace().strong().size(10.8),
+                )
+                .on_hover_text(format!("{} — {} ({})", m.name, m.target, m.smiles));
+            } else {
+                ui.small("None");
+            }
+            if ui
+                .small_button("▶")
+                .on_hover_text("Next compound in active series")
+                .clicked()
+            {
+                step_delta = 1;
+            }
+
+            ui.separator();
+
+            // Inline Global Compound / SMILES / Scaffold Search
+            ui.label(
+                RichText::new("Search:")
+                    .size(11.0)
+                    .color(Color32::from_rgb(148, 163, 184)),
+            );
+            let search_edit = egui::TextEdit::singleline(&mut self.search_query)
+                .hint_text("Compound / SMILES / Scaffold...")
+                .desired_width(175.0);
+            if ui.add(search_edit).changed() {
+                self.scene_dirty = true;
+                self.heatmap_dirty = true;
+            }
+            if !self.search_query.is_empty() && ui.small_button("x").clicked() {
+                self.search_query.clear();
+                self.scene_dirty = true;
+                self.heatmap_dirty = true;
+            }
+        });
+
+        if let Some(target_key) = switch_to {
+            self.switch_campaign(target_key);
+        } else if step_delta != 0 {
+            self.step_active_lead(step_delta);
+        }
+    }
+
     fn render_domain_navigation_ribbon(&mut self, ui: &mut egui::Ui) {
         let active_dom = self.active_tab.domain();
         let mut next_tab: Option<WorkbenchTab> = None;
@@ -16324,16 +16915,19 @@ impl SarAtlasGuiApp {
 
             ui.separator();
 
-            // 5 Categorized Domain Pills
+            // 5 Clean Primary Workspace Pillars
             for dom in WorkbenchDomain::ALL {
                 let is_dom = dom == active_dom;
                 let [r, g, b] = dom.rgb();
                 let txt = if is_dom {
                     RichText::new(dom.pill_label())
                         .strong()
+                        .size(12.0)
                         .color(Color32::from_rgb(r, g, b))
                 } else {
-                    RichText::new(dom.pill_label()).color(Color32::from_rgb(203, 213, 225))
+                    RichText::new(dom.pill_label())
+                        .size(12.0)
+                        .color(Color32::from_rgb(203, 213, 225))
                 };
                 if ui
                     .selectable_label(is_dom, txt)
@@ -16346,25 +16940,35 @@ impl SarAtlasGuiApp {
 
             ui.separator();
 
-            // Contextual Sub-Tabs for the Active Domain Only (4 or 5 crisp items — zero clutter!)
+            // Clean "Studio Tool ▾" selector pill replacing 15 wrapping sub-tab chips
             let [dr, dg, db] = active_dom.rgb();
-            for &tab in active_dom.tabs() {
-                let is_act = self.active_tab == tab;
-                let txt = if is_act {
-                    RichText::new(tab.sub_label())
+            let tool_pill = RichText::new(format!("Studio Tool: {} ▾", self.active_tab.sub_label()))
+                .strong()
+                .size(11.8)
+                .color(Color32::from_rgb(dr, dg, db));
+            ui.menu_button(tool_pill, |ui| {
+                ui.set_min_width(290.0);
+                ui.label(
+                    RichText::new(active_dom.pill_label())
                         .strong()
-                        .color(Color32::from_rgb(dr, dg, db))
-                } else {
-                    RichText::new(tab.sub_label()).strong()
-                };
-                if ui
-                    .selectable_label(is_act, txt)
-                    .on_hover_text(tab.summary())
-                    .clicked()
-                {
-                    next_tab = Some(tab);
+                        .color(Color32::from_rgb(dr, dg, db)),
+                );
+                ui.separator();
+                for &tab in active_dom.tabs() {
+                    let is_act = self.active_tab == tab;
+                    let prefix = if is_act { "* " } else { "  " };
+                    if ui
+                        .selectable_label(is_act, format!("{prefix}{}", tab.sub_label()))
+                        .on_hover_text(tab.summary())
+                        .clicked()
+                    {
+                        next_tab = Some(tab);
+                        ui.close_menu();
+                    }
                 }
-            }
+            })
+            .response
+            .on_hover_text(self.active_tab.summary());
 
             // Right-side Drawer & Inspector Toggles
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -16474,6 +17078,7 @@ impl SarAtlasGuiApp {
             ui.separator();
             ui.label("Target:");
             let targets = self.distinct_targets();
+            let mut target_changed = false;
             egui::ComboBox::from_id_salt("target_combo")
                 .selected_text(&self.target_filter)
                 .width(105.0)
@@ -16483,11 +17088,14 @@ impl SarAtlasGuiApp {
                             .selectable_value(&mut self.target_filter, t.clone(), &t)
                             .changed()
                         {
-                            self.scene_dirty = true;
-                            self.heatmap_dirty = true;
+                            target_changed = true;
                         }
                     }
                 });
+            if target_changed {
+                let tf = self.target_filter.clone();
+                self.switch_campaign(&tf);
+            }
 
             let c1 = ui.checkbox(&mut self.hide_pains, "No PAINS").changed();
             let c2 = ui.checkbox(&mut self.pareto_only, "Pareto").changed();
@@ -16608,9 +17216,10 @@ impl SarAtlasGuiApp {
 
         ui.separator();
 
-        // 2. Persistent Dataset Compound Selector (works across ALL 22 tabs!)
+        // 2. Persistent Dataset Compound Selector (filtered to active campaign!)
+        let vis_count = self.visible_mask.iter().filter(|&&v| v).count();
         ui.label(
-            RichText::new(format!("Compounds ({})", self.ds.mols.len()))
+            RichText::new(format!("Campaign Leads ({}/{})", vis_count, self.ds.mols.len()))
                 .strong()
                 .color(Color32::from_rgb(56, 189, 248)),
         );
@@ -16681,8 +17290,7 @@ impl SarAtlasGuiApp {
             });
 
         if let Some(mi) = clicked_mol {
-            self.selected_mol = mi;
-            self.scene_dirty = true;
+            self.select_active_lead(mi);
         }
         if let Some(t) = nav_req {
             self.navigate_to_tab(t);
@@ -17009,8 +17617,10 @@ impl SarAtlasGuiApp {
             inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
         };
 
+        let camp_ds = self.active_campaign_dataset();
+        let camp_idx_opt = idx_opt.and_then(|_| camp_ds.mols.iter().position(|m| m.id == target_mol.id));
         let doss_key = format!(
-            "{}|{}|{:?}|{:.2}|{:?}|{:?}|{}|{}",
+            "{}|{}|{:?}|{:.2}|{:?}|{:?}|{}|{}|{}",
             target_mol.id,
             target_mol.smiles,
             self.dossier_profile,
@@ -17018,13 +17628,14 @@ impl SarAtlasGuiApp {
             pbpk_cfg.regimen,
             pbpk_cfg.prandial,
             pbpk_cfg.inhibit_bbb_efflux,
-            self.ds.mols.len()
+            self.target_filter,
+            camp_ds.mols.len()
         );
         if self.dossier_cached_key != doss_key || self.dossier_report.is_none() {
             self.dossier_report = Some(build_lead_campaign_dossier(
                 &target_mol,
-                Some(&self.ds),
-                idx_opt,
+                Some(&camp_ds),
+                camp_idx_opt,
                 self.dossier_profile,
                 pbpk_cfg,
             ));
@@ -17032,14 +17643,15 @@ impl SarAtlasGuiApp {
         }
 
         let camp_key = format!(
-            "{}|{:?}|{:.2}",
-            self.ds.mols.len(),
+            "{}|{}|{:?}|{:.2}",
+            self.target_filter,
+            camp_ds.mols.len(),
             self.dossier_profile,
             pbpk_cfg.dose_mg
         );
         if self.dossier_campaign_cached_key != camp_key || self.dossier_campaign_summary.is_none() {
             self.dossier_campaign_summary = Some(evaluate_campaign_scorecard(
-                &self.ds,
+                &camp_ds,
                 self.dossier_profile,
                 pbpk_cfg.dose_mg,
             ));
@@ -17105,7 +17717,7 @@ impl SarAtlasGuiApp {
                 .clicked()
             {
                 let out = self.dossier_export_camp_html_buf.trim().to_string();
-                let html = export_campaign_dossier_html(&self.ds, &camp_sum, self.dossier_top_n_html);
+                let html = export_campaign_dossier_html(&camp_ds, &camp_sum, self.dossier_top_n_html);
                 match std::fs::write(&out, html) {
                     Ok(_) => {
                         self.status_banner = format!(
@@ -17154,11 +17766,13 @@ impl SarAtlasGuiApp {
             ));
             if let (Some(fi), Some(bi)) = (camp_sum.front_runner_idx, camp_sum.backup_scaffold_idx) {
                 ui.separator();
+                let fr_name = camp_ds.mols.get(fi).map(|m| m.name.as_str()).unwrap_or("-");
+                let bk_name = camp_ds.mols.get(bi).map(|m| m.name.as_str()).unwrap_or("-");
                 ui.colored_label(
                     Color32::from_rgb(192, 132, 252),
                     format!(
                         "Portfolio #1: {} | Scaffold-Distinct Backup: {}",
-                        self.ds.mols[fi].name, self.ds.mols[bi].name
+                        fr_name, bk_name
                     ),
                 );
             }
@@ -17166,7 +17780,7 @@ impl SarAtlasGuiApp {
 
         ui.separator();
 
-        let mut pick_mol_idx: Option<usize> = None;
+        let mut pick_mol_idx: Option<(String, usize)> = None;
         let mut send_smiles_to_sketcher: Option<String> = None;
 
         egui::ScrollArea::vertical()
@@ -17300,7 +17914,8 @@ impl SarAtlasGuiApp {
                                     ui.end_row();
 
                                     for r in camp_sum.rows.iter().take(40) {
-                                        let is_sel = !self.dossier_use_sketcher_mol && r.mol_idx == sel_idx;
+                                        let is_sel =
+                                            !self.dossier_use_sketcher_mol && self.is_active_lead_id(&r.id);
                                         let [cr, cg, cb] = r.tier.rgb();
                                         let role_tag = if Some(r.mol_idx) == camp_sum.front_runner_idx {
                                             " [Front-Runner]"
@@ -17317,7 +17932,7 @@ impl SarAtlasGuiApp {
                                             )
                                             .clicked()
                                         {
-                                            pick_mol_idx = Some(r.mol_idx);
+                                            pick_mol_idx = Some((r.id.clone(), r.mol_idx));
                                         }
                                         ui.label(&r.target);
                                         ui.monospace(format!("{:.2}", r.pact));
@@ -17348,10 +17963,9 @@ impl SarAtlasGuiApp {
                 });
             });
 
-        if let Some(mi) = pick_mol_idx {
+        if let Some((id, mi)) = pick_mol_idx {
             self.dossier_use_sketcher_mol = false;
-            self.selected_mol = mi;
-            self.scene_dirty = true;
+            self.select_mol_by_id_or_idx(&id, mi);
         }
         if let Some(smi) = send_smiles_to_sketcher {
             if self.sketcher.load_from_smiles(&smi).is_ok() {
@@ -17502,8 +18116,9 @@ impl SarAtlasGuiApp {
             self.denovo_cfg.enable_ring_hops = true;
         }
 
+        let camp_ds = self.active_campaign_dataset();
         let cache_key = format!(
-            "{}|{}|{:?}|{}|{}|{:.2}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{:?}|{}|{}|{:.2}|{}|{}|{}|{}|{}|{}|{}",
             seed_mol.id,
             seed_mol.smiles,
             self.denovo_cfg.goal,
@@ -17515,12 +18130,13 @@ impl SarAtlasGuiApp {
             self.denovo_cfg.enable_ring_hops,
             self.denovo_cfg.enable_brics_crossover,
             self.denovo_cfg.random_seed,
-            self.ds.mols.len()
+            self.target_filter,
+            camp_ds.mols.len()
         );
         if self.denovo_cached_key != cache_key || self.denovo_report.is_none() {
             self.denovo_report = Some(evolve_de_novo_molecules(
                 &seed_mol,
-                Some(&self.ds),
+                Some(&camp_ds),
                 self.denovo_cfg.clone(),
             ));
             self.denovo_cached_key = cache_key;
@@ -17991,9 +18607,10 @@ impl SarAtlasGuiApp {
             return;
         };
 
-        let screen_key = format!("{pock_key}|{}", self.ds.mols.len());
+        let camp_ds = self.active_campaign_dataset();
+        let screen_key = format!("{pock_key}|{}|{}", self.target_filter, camp_ds.mols.len());
         if self.pocket_screen_cached_key != screen_key {
-            self.pocket_screen_hits = screen_dataset_against_pocket(&self.ds, &pocket);
+            self.pocket_screen_hits = screen_dataset_against_pocket(&camp_ds, &pocket);
             self.pocket_screen_cached_key = screen_key;
         }
 
@@ -18052,7 +18669,7 @@ impl SarAtlasGuiApp {
 
         ui.separator();
 
-        let mut pick_ds_idx: Option<usize> = None;
+        let mut pick_ds_idx: Option<(String, usize)> = None;
 
         egui::ScrollArea::vertical()
             .id_salt("pocket_cavity_main_scroll")
@@ -18210,7 +18827,7 @@ impl SarAtlasGuiApp {
 
                                     for h in self.pocket_screen_hits.iter().take(40) {
                                         let is_sel = !self.pocket_use_sketcher_lig
-                                            && h.mol_idx == Some(sel_idx);
+                                            && self.is_active_lead_id(&h.compound_id);
                                         ui.monospace(format!("#{}", h.rank));
                                         if ui
                                             .selectable_label(
@@ -18219,7 +18836,9 @@ impl SarAtlasGuiApp {
                                             )
                                             .clicked()
                                         {
-                                            pick_ds_idx = h.mol_idx;
+                                            if let Some(mi) = h.mol_idx {
+                                                pick_ds_idx = Some((h.compound_id.clone(), mi));
+                                            }
                                         }
                                         ui.label(&h.target);
                                         ui.colored_label(
@@ -18248,10 +18867,9 @@ impl SarAtlasGuiApp {
                 });
             });
 
-        if let Some(mi) = pick_ds_idx {
+        if let Some((id, mi)) = pick_ds_idx {
             self.pocket_use_sketcher_lig = false;
-            self.selected_mol = mi;
-            self.scene_dirty = true;
+            self.select_mol_by_id_or_idx(&id, mi);
         }
     }
 
@@ -18423,6 +19041,7 @@ impl SarAtlasGuiApp {
             .map(|p| analyze_binding_pocket(&p, None, 10.5));
 
         if self.plib_cached_key != cache_key || self.plib_report.is_none() {
+            let camp_ds = self.active_campaign_dataset();
             let ref_mol = if self.plib_use_sketcher_query && !self.sketcher.mol.atoms.is_empty() {
                 Some(&self.sketcher.mol)
             } else {
@@ -18432,7 +19051,7 @@ impl SarAtlasGuiApp {
                 &self.plib_cfg,
                 ref_mol,
                 pocket_parsed.as_ref(),
-                Some(&self.ds),
+                Some(&camp_ds),
             );
             self.plib_report = Some(rep);
             self.plib_cached_key = cache_key;
@@ -18866,9 +19485,10 @@ impl SarAtlasGuiApp {
             return;
         };
 
-        let screen_key = format!("{dual_key}|DS:{}", self.ds.mols.len());
+        let camp_ds = self.active_campaign_dataset();
+        let screen_key = format!("{dual_key}|DS:{}|{}", self.target_filter, camp_ds.mols.len());
         if self.sel_screen_cached_key != screen_key {
-            self.sel_screen_rows = screen_dataset_selectivity(&self.ds, &dual);
+            self.sel_screen_rows = screen_dataset_selectivity(&camp_ds, &dual);
             self.sel_screen_cached_key = screen_key;
         }
 
@@ -19063,7 +19683,7 @@ impl SarAtlasGuiApp {
             }
         });
 
-        let mut pick_ds_idx: Option<usize> = None;
+        let mut pick_ds_idx: Option<(String, usize)> = None;
         egui::ScrollArea::vertical()
             .id_salt("sel_bottom_scroll")
             .max_height(ui.available_height().max(135.0))
@@ -19088,7 +19708,8 @@ impl SarAtlasGuiApp {
                             ui.end_row();
 
                             for r in self.sel_screen_rows.iter().take(40) {
-                                let is_sel = !self.sel_use_sketcher_lig && r.mol_idx == Some(sel_idx);
+                                let is_sel = !self.sel_use_sketcher_lig
+                                    && self.is_active_lead_id(&r.compound_id);
                                 ui.monospace(format!("#{}", r.rank));
                                 if ui
                                     .selectable_label(
@@ -19097,7 +19718,9 @@ impl SarAtlasGuiApp {
                                     )
                                     .clicked()
                                 {
-                                    pick_ds_idx = r.mol_idx;
+                                    if let Some(mi) = r.mol_idx {
+                                        pick_ds_idx = Some((r.compound_id.clone(), mi));
+                                    }
                                 }
                                 ui.monospace(format!("{:.1}", r.selectivity_discovery_score));
                                 ui.monospace(format!("{:+.2}", r.target_dg_kcal));
@@ -19168,10 +19791,9 @@ impl SarAtlasGuiApp {
                 }
             });
 
-        if let Some(mi) = pick_ds_idx {
+        if let Some((id, mi)) = pick_ds_idx {
             self.sel_use_sketcher_lig = false;
-            self.selected_mol = mi;
-            self.scene_dirty = true;
+            self.select_mol_by_id_or_idx(&id, mi);
         }
     }
 
@@ -19346,9 +19968,14 @@ impl SarAtlasGuiApp {
             }
         });
 
-        let screen_key = format!("{net_key}|S:{site_idx}|DS:{}", self.ds.mols.len());
+        let camp_ds = self.active_campaign_dataset();
+        let screen_key = format!(
+            "{net_key}|S:{site_idx}|DS:{}|{}",
+            self.target_filter,
+            camp_ds.mols.len()
+        );
         if self.allo_screen_cached_key != screen_key {
-            self.allo_screen_rows = screen_dataset_allosteric_pocket(&self.ds, &net, site_idx);
+            self.allo_screen_rows = screen_dataset_allosteric_pocket(&camp_ds, &net, site_idx);
             self.allo_screen_cached_key = screen_key;
         }
 
@@ -19470,7 +20097,7 @@ impl SarAtlasGuiApp {
         });
 
         // Bottom Ranked Cryptic / Allosteric Modulator Table
-        let mut pick_ds_idx: Option<usize> = None;
+        let mut pick_ds_idx: Option<(String, usize)> = None;
         ui.add_space(4.0);
         egui::ScrollArea::vertical()
             .id_salt("allo_screen_scroll")
@@ -19495,7 +20122,8 @@ impl SarAtlasGuiApp {
                         ui.end_row();
 
                         for r in self.allo_screen_rows.iter().take(40) {
-                            let is_sel = !self.allo_use_sketcher_lig && r.mol_idx == Some(sel_idx);
+                            let is_sel = !self.allo_use_sketcher_lig
+                                && self.is_active_lead_id(&r.compound_id);
                             ui.monospace(format!("#{}", r.rank));
                             if ui
                                 .selectable_label(
@@ -19504,7 +20132,9 @@ impl SarAtlasGuiApp {
                                 )
                                 .clicked()
                             {
-                                pick_ds_idx = r.mol_idx;
+                                if let Some(mi) = r.mol_idx {
+                                    pick_ds_idx = Some((r.compound_id.clone(), mi));
+                                }
                             }
                             ui.monospace(format!("{:.1}", r.allosteric_discovery_score));
                             ui.monospace(format!("{:+.2} kcal", r.intrinsic_open_dg_kcal));
@@ -19540,10 +20170,9 @@ impl SarAtlasGuiApp {
                     });
             });
 
-        if let Some(mi) = pick_ds_idx {
+        if let Some((id, mi)) = pick_ds_idx {
             self.allo_use_sketcher_lig = false;
-            self.selected_mol = mi;
-            self.scene_dirty = true;
+            self.select_mol_by_id_or_idx(&id, mi);
         }
     }
 
@@ -19638,9 +20267,11 @@ impl SarAtlasGuiApp {
             .map(String::from)
             .collect();
 
+        let camp_ds = self.active_campaign_dataset();
         let al_key = format!(
-            "DS:{}|{}|{}|{}|{}|{:.2}|{:.2}|{:.2}|{}|{}",
-            self.ds.mols.len(),
+            "DS:{}|{}|{}|{}|{}|{}|{:.2}|{:.2}|{:.2}|{}|{}",
+            self.target_filter,
+            camp_ds.mols.len(),
             self.al_cfg.surrogate_kind.short_label(),
             self.al_cfg.kernel_mode.short_label(),
             self.al_cfg.acquisition.short_label(),
@@ -19653,7 +20284,7 @@ impl SarAtlasGuiApp {
         );
 
         if self.al_cached_key != al_key || self.al_report.is_none() {
-            self.al_report = Some(run_active_learning_campaign(&self.ds, &self.al_cfg));
+            self.al_report = Some(run_active_learning_campaign(&camp_ds, &self.al_cfg));
             self.al_cached_key = al_key;
             self.al_selected_cand_idx = 0;
         }
@@ -19961,9 +20592,15 @@ impl SarAtlasGuiApp {
             .map(String::from)
             .collect();
 
+        let rbfe_ds = if self.rbfe_cfg.series_preset == RbfeSeriesPreset::AutoDominantTarget {
+            self.active_campaign_dataset()
+        } else {
+            self.ds.clone()
+        };
         let rbfe_key = format!(
-            "DS:{}|{}|{}|{}|{:.2}|{:.2}|{}|{:.2}|{}|{}",
-            self.ds.mols.len(),
+            "DS:{}|{}|{}|{}|{}|{:.2}|{:.2}|{}|{:.2}|{}|{}",
+            self.target_filter,
+            rbfe_ds.mols.len(),
             self.rbfe_cfg.series_preset.code(),
             self.rbfe_cfg.topology_mode.short_label(),
             self.rbfe_cfg.lambda_windows,
@@ -19976,7 +20613,7 @@ impl SarAtlasGuiApp {
         );
 
         if self.rbfe_cached_key != rbfe_key || self.rbfe_report.is_none() {
-            self.rbfe_report = Some(run_rbfe_network_campaign(&self.ds, &self.rbfe_cfg));
+            self.rbfe_report = Some(run_rbfe_network_campaign(&rbfe_ds, &self.rbfe_cfg));
             self.rbfe_cached_key = rbfe_key;
             self.rbfe_selected_edge_idx = 0;
             self.rbfe_selected_cycle_idx = None;
@@ -20050,12 +20687,18 @@ impl SarAtlasGuiApp {
                     let w_graph = (total_w * 0.54).max(155.0);
                     let (rect_g, resp_g) =
                         ui.allocate_exact_size(Vec2::new(w_graph, 226.0), Sense::click_and_drag());
+                    let active_lead_id = self
+                        .ds
+                        .mols
+                        .get(self.selected_mol)
+                        .map(|m| m.id.clone());
                     if let Some(clicked_ei) = paint_rbfe_lomap_perturbation_graph(
                         ui.painter(),
                         rect_g,
                         &rep,
                         active_ei,
                         self.rbfe_selected_cycle_idx,
+                        active_lead_id.as_deref(),
                         resp_g.clicked().then(|| resp_g.interact_pointer_pos()).flatten(),
                     ) {
                         self.rbfe_selected_edge_idx = clicked_ei;
@@ -20160,6 +20803,7 @@ impl SarAtlasGuiApp {
 
         let mut pick_ei: Option<usize> = None;
         let mut pick_ci: Option<usize> = None;
+        let mut pick_node_id: Option<(String, usize)> = None;
 
         egui::ScrollArea::vertical()
             .id_salt("rbfe_bottom_scroll")
@@ -20326,8 +20970,23 @@ impl SarAtlasGuiApp {
                             ui.end_row();
 
                             for nd in &rep.nodes {
+                                let is_sel = !nd.is_prospective_custom
+                                    && self.is_active_lead_id(&nd.compound_id);
                                 ui.monospace(format!("N{}", nd.node_idx + 1));
-                                ui.label(format!("{} ({})", nd.compound_name, nd.compound_id));
+                                if !nd.is_prospective_custom {
+                                    if ui
+                                        .selectable_label(
+                                            is_sel,
+                                            format!("{} ({})", nd.compound_name, nd.compound_id),
+                                        )
+                                        .clicked()
+                                    {
+                                        pick_node_id =
+                                            Some((nd.compound_id.clone(), nd.node_idx));
+                                    }
+                                } else {
+                                    ui.label(format!("{} ({})", nd.compound_name, nd.compound_id));
+                                }
                                 if nd.is_reference_anchor {
                                     ui.colored_label(
                                         Color32::from_rgb(251, 191, 36),
@@ -20381,6 +21040,9 @@ impl SarAtlasGuiApp {
             if let Some(&(first_ei, _)) = rep.cycles[ci].directed_edges.first() {
                 self.rbfe_selected_edge_idx = first_ei;
             }
+        }
+        if let Some((cid, ni)) = pick_node_id {
+            self.select_mol_by_id_or_idx(&cid, ni);
         }
     }
 
@@ -20450,17 +21112,19 @@ impl SarAtlasGuiApp {
             self.ds.mols[sel_idx].clone()
         };
 
+        let camp_ds = self.active_campaign_dataset();
         let tor_key = format!(
-            "{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}",
             if self.torsion_use_sketcher { "SK" } else { "DS" },
             query_mol.smiles,
             self.torsion_pose_source.short_label(),
-            self.ds.mols.len()
+            self.target_filter,
+            camp_ds.mols.len()
         );
         if self.torsion_cached_key != tor_key || self.torsion_report.is_none() {
             self.torsion_report = Some(analyze_torsion_strain_and_locks(
                 &query_mol,
-                Some(&self.ds),
+                Some(&camp_ds),
                 self.torsion_pose_source,
                 true,
             ));
@@ -20637,7 +21301,7 @@ impl SarAtlasGuiApp {
             if ui
                 .selectable_label(
                     self.torsion_table_mode == 2,
-                    format!("3. Dataset Shoichet TEU Strain Triage ({})", self.ds.mols.len()),
+                    format!("3. Dataset Shoichet TEU Strain Triage ({})", camp_ds.mols.len()),
                 )
                 .clicked()
             {
@@ -20647,20 +21311,21 @@ impl SarAtlasGuiApp {
 
         if self.torsion_table_mode == 2 {
             let s_key = format!(
-                "SCR:{}|{}",
-                self.ds.mols.len(),
+                "SCR:{}|{}|{}",
+                self.target_filter,
+                camp_ds.mols.len(),
                 self.torsion_pose_source.short_label()
             );
             if self.torsion_screen_key != s_key || self.torsion_screen_rows.is_empty() {
                 self.torsion_screen_rows =
-                    screen_dataset_torsion_strain(&self.ds, self.torsion_pose_source);
+                    screen_dataset_torsion_strain(&camp_ds, self.torsion_pose_source);
                 self.torsion_screen_key = s_key;
             }
         }
 
         let mut pick_ri: Option<usize> = None;
         let mut pick_li: Option<usize> = None;
-        let mut pick_ds_mi: Option<usize> = None;
+        let mut pick_ds_mi: Option<(String, usize)> = None;
 
         egui::ScrollArea::vertical()
             .id_salt("torsion_bottom_scroll")
@@ -20808,15 +21473,17 @@ impl SarAtlasGuiApp {
                             ui.end_row();
 
                             for r in &self.torsion_screen_rows {
+                                let is_sel =
+                                    !self.torsion_use_sketcher && self.is_active_lead_id(&r.compound_id);
                                 ui.monospace(format!("#{}", r.rank));
                                 if ui
                                     .selectable_label(
-                                        r.mol_idx == sel_idx && !self.torsion_use_sketcher,
+                                        is_sel,
                                         format!("{} ({})", r.compound_name, r.compound_id),
                                     )
                                     .clicked()
                                 {
-                                    pick_ds_mi = Some(r.mol_idx);
+                                    pick_ds_mi = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 ui.small(&r.target);
                                 ui.monospace(format!("{:.2}", r.observed_pact));
@@ -20861,17 +21528,17 @@ impl SarAtlasGuiApp {
         if let Some(li) = pick_li {
             self.torsion_selected_lock_idx = li;
         }
-        if let Some(mi) = pick_ds_mi {
+        if let Some((id, mi)) = pick_ds_mi {
             self.torsion_use_sketcher = false;
-            self.selected_mol = mi;
-            self.scene_dirty = true;
+            self.select_mol_by_id_or_idx(&id, mi);
             self.torsion_table_mode = 0;
         }
     }
 
     fn render_electrostatics_esp_tab(&mut self, ui: &mut egui::Ui) {
         let sel_idx = self.selected_mol.min(self.ds.mols.len().saturating_sub(1));
-        let mut pick_mol_idx: Option<usize> = None;
+        let camp_ds = self.active_campaign_dataset();
+        let mut pick_mol_idx: Option<(String, usize)> = None;
         let mut send_smiles_to_sketcher: Option<String> = None;
 
         ui.horizontal_wrapped(|ui| {
@@ -20946,7 +21613,7 @@ impl SarAtlasGuiApp {
                 self.esp_surface_color_ec = false;
             }
             if ui.small_button("Screen Entire Dataset").clicked() {
-                self.esp_screen_rows = screen_dataset_electrostatics_esp(&self.ds, &self.esp_cfg);
+                self.esp_screen_rows = screen_dataset_electrostatics_esp(&camp_ds, &self.esp_cfg);
                 self.esp_bottom_subtab = 2;
             }
         });
@@ -20960,18 +21627,19 @@ impl SarAtlasGuiApp {
         };
 
         let cache_key = format!(
-            "{}|{:?}|{:.2}|{}|{}|{}",
+            "{}|{:?}|{:.2}|{}|{}|{}|{}",
             self.esp_cfg.preset.code(),
             self.esp_cfg.custom_pdb_path,
             self.esp_cfg.interface_dielectric,
             self.esp_cfg.enable_xed_multipoles as u8,
+            self.target_filter,
             query_mol.id,
             query_mol.smiles
         );
         if self.esp_cached_key != cache_key || self.esp_report.is_none() {
             self.esp_report = Some(analyze_electrostatics_esp(
                 &query_mol,
-                Some(&self.ds),
+                Some(&camp_ds),
                 &self.esp_cfg,
             ));
             self.esp_cached_key = cache_key;
@@ -21251,7 +21919,8 @@ impl SarAtlasGuiApp {
                 .clicked()
             {
                 if self.esp_screen_rows.is_empty() {
-                    self.esp_screen_rows = screen_dataset_electrostatics_esp(&self.ds, &self.esp_cfg);
+                    self.esp_screen_rows =
+                        screen_dataset_electrostatics_esp(&camp_ds, &self.esp_cfg);
                 }
                 self.esp_bottom_subtab = 2;
             }
@@ -21386,20 +22055,22 @@ impl SarAtlasGuiApp {
                             ui.end_row();
 
                             for r in &self.esp_screen_rows {
+                                let is_sel =
+                                    !self.esp_use_sketcher && self.is_active_lead_id(&r.compound_id);
                                 if ui
-                                    .selectable_label(r.mol_idx == sel_idx, format!("#{}", r.rank))
+                                    .selectable_label(is_sel, format!("#{}", r.rank))
                                     .clicked()
                                 {
-                                    pick_mol_idx = Some(r.mol_idx);
+                                    pick_mol_idx = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 if ui
                                     .selectable_label(
-                                        r.mol_idx == sel_idx,
+                                        is_sel,
                                         format!("{} ({})", r.compound_name, r.compound_id),
                                     )
                                     .clicked()
                                 {
-                                    pick_mol_idx = Some(r.mol_idx);
+                                    pick_mol_idx = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 ui.monospace(format!("{:.2}", r.observed_pact));
                                 ui.monospace(format!("{:+.3}", r.ec_integral));
@@ -21427,10 +22098,10 @@ impl SarAtlasGuiApp {
             self.esp_cached_key.clear();
             self.status_banner = format!("Loaded ESP-tuned analog into 2D Sketcher: {smi}");
         }
-        if let Some(mi) = pick_mol_idx {
-            self.selected_mol = mi;
+        if let Some((id, mi)) = pick_mol_idx {
             self.esp_use_sketcher = false;
             self.esp_cached_key.clear();
+            self.select_mol_by_id_or_idx(&id, mi);
         }
     }
 
@@ -22790,7 +23461,8 @@ impl SarAtlasGuiApp {
 
     fn render_watermap_solvation_tab(&mut self, ui: &mut egui::Ui) {
         let sel_idx = self.selected_mol.min(self.ds.mols.len().saturating_sub(1));
-        let mut pick_mol_idx: Option<usize> = None;
+        let camp_ds = self.active_campaign_dataset();
+        let mut pick_mol_idx: Option<(String, usize)> = None;
         let mut send_smiles_to_sketcher: Option<String> = None;
 
         ui.horizontal_wrapped(|ui| {
@@ -22861,7 +23533,7 @@ impl SarAtlasGuiApp {
             ui.checkbox(&mut self.wm_show_gist_cloud, "GIST Cloud");
             ui.checkbox(&mut self.wm_show_rgroup_arrows, "R-Vector Arrows");
             if ui.small_button("Screen Entire Dataset").clicked() {
-                self.wm_screen_rows = screen_dataset_watermap_solvation(&self.ds, &self.wm_cfg);
+                self.wm_screen_rows = screen_dataset_watermap_solvation(&camp_ds, &self.wm_cfg);
                 self.wm_bottom_subtab = 2;
             }
         });
@@ -22875,19 +23547,20 @@ impl SarAtlasGuiApp {
         };
 
         let cache_key = format!(
-            "{}|{:?}|{:.2}|{:.2}|{}|{}|{}",
+            "{}|{:?}|{:.2}|{:.2}|{}|{}|{}|{}",
             self.wm_cfg.preset.code(),
             self.wm_cfg.custom_pdb_path,
             self.wm_cfg.gist_voxel_spacing_a,
             self.wm_cfg.hotspot_dg_threshold_kcal,
             self.wm_cfg.design_rgroup_vectors as u8,
+            self.target_filter,
             query_mol.id,
             query_mol.smiles
         );
         if self.wm_cached_key != cache_key || self.wm_report.is_none() {
             self.wm_report = Some(analyze_watermap_solvation(
                 &query_mol,
-                Some(&self.ds),
+                Some(&camp_ds),
                 &self.wm_cfg,
             ));
             self.wm_cached_key = cache_key;
@@ -23174,7 +23847,7 @@ impl SarAtlasGuiApp {
                 .clicked()
             {
                 if self.wm_screen_rows.is_empty() {
-                    self.wm_screen_rows = screen_dataset_watermap_solvation(&self.ds, &self.wm_cfg);
+                    self.wm_screen_rows = screen_dataset_watermap_solvation(&camp_ds, &self.wm_cfg);
                 }
                 self.wm_bottom_subtab = 2;
             }
@@ -23329,20 +24002,22 @@ impl SarAtlasGuiApp {
                             ui.end_row();
 
                             for r in &self.wm_screen_rows {
+                                let is_sel =
+                                    !self.wm_use_sketcher && self.is_active_lead_id(&r.compound_id);
                                 if ui
-                                    .selectable_label(r.mol_idx == sel_idx, format!("#{}", r.rank))
+                                    .selectable_label(is_sel, format!("#{}", r.rank))
                                     .clicked()
                                 {
-                                    pick_mol_idx = Some(r.mol_idx);
+                                    pick_mol_idx = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 if ui
                                     .selectable_label(
-                                        r.mol_idx == sel_idx,
+                                        is_sel,
                                         format!("{} ({})", r.compound_name, r.compound_id),
                                     )
                                     .clicked()
                                 {
-                                    pick_mol_idx = Some(r.mol_idx);
+                                    pick_mol_idx = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 ui.monospace(format!("{:.2}", r.observed_pact));
                                 ui.monospace(format!("{}", r.displaced_hotspots));
@@ -23372,17 +24047,18 @@ impl SarAtlasGuiApp {
             self.wm_cached_key.clear();
             self.status_banner = format!("Loaded designed WaterMap analog into 2D Sketcher: {smi}");
         }
-        if let Some(mi) = pick_mol_idx {
-            self.selected_mol = mi;
+        if let Some((id, mi)) = pick_mol_idx {
             self.wm_use_sketcher = false;
             self.wm_cached_key.clear();
+            self.select_mol_by_id_or_idx(&id, mi);
         }
     }
 
 
     fn render_hbond_network_tab(&mut self, ui: &mut egui::Ui) {
         let sel_idx = self.selected_mol.min(self.ds.mols.len().saturating_sub(1));
-        let mut pick_mol_idx: Option<usize> = None;
+        let camp_ds = self.active_campaign_dataset();
+        let mut pick_mol_idx: Option<(String, usize)> = None;
 
         ui.horizontal_wrapped(|ui| {
             ui.heading("Active-Site His/Asp/Glu Tautomer & Bridge-Water H-Bond Network Optimizer");
@@ -23451,7 +24127,7 @@ impl SarAtlasGuiApp {
             }
             ui.checkbox(&mut self.hbn_show_naive_overlay, "Compare Unoptimized Crystal");
             if ui.small_button("Screen Entire Dataset").clicked() {
-                self.hbn_screen_rows = screen_dataset_hbond_network(&self.ds, &self.hbn_cfg);
+                self.hbn_screen_rows = screen_dataset_hbond_network(&camp_ds, &self.hbn_cfg);
                 self.hbn_bottom_subtab = 2;
             }
         });
@@ -23465,20 +24141,21 @@ impl SarAtlasGuiApp {
         };
 
         let cache_key = format!(
-            "{}|{:?}|{:.2}|{}{}{}|{}|{}",
+            "{}|{:?}|{:.2}|{}{}{}|{}|{}|{}",
             self.hbn_cfg.preset.code(),
             self.hbn_cfg.custom_pdb_path,
             self.hbn_cfg.target_ph,
             self.hbn_cfg.include_crystallographic_waters as u8,
             self.hbn_cfg.allow_180_flips as u8,
             self.hbn_cfg.allow_asp_glu_protonation as u8,
+            self.target_filter,
             query_mol.id,
             query_mol.smiles
         );
         if self.hbn_cached_key != cache_key || self.hbn_report.is_none() {
             self.hbn_report = Some(optimize_pocket_hbond_network(
                 &query_mol,
-                Some(&self.ds),
+                Some(&camp_ds),
                 &self.hbn_cfg,
             ));
             self.hbn_cached_key = cache_key;
@@ -23776,7 +24453,7 @@ impl SarAtlasGuiApp {
                 .clicked()
             {
                 if self.hbn_screen_rows.is_empty() {
-                    self.hbn_screen_rows = screen_dataset_hbond_network(&self.ds, &self.hbn_cfg);
+                    self.hbn_screen_rows = screen_dataset_hbond_network(&camp_ds, &self.hbn_cfg);
                 }
                 self.hbn_bottom_subtab = 2;
             }
@@ -23918,20 +24595,22 @@ impl SarAtlasGuiApp {
                             ui.end_row();
 
                             for r in &self.hbn_screen_rows {
+                                let is_sel =
+                                    !self.hbn_use_sketcher && self.is_active_lead_id(&r.compound_id);
                                 if ui
-                                    .selectable_label(r.mol_idx == sel_idx, format!("#{}", r.rank))
+                                    .selectable_label(is_sel, format!("#{}", r.rank))
                                     .clicked()
                                 {
-                                    pick_mol_idx = Some(r.mol_idx);
+                                    pick_mol_idx = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 if ui
                                     .selectable_label(
-                                        r.mol_idx == sel_idx,
+                                        is_sel,
                                         format!("{} ({})", r.compound_name, r.compound_id),
                                     )
                                     .clicked()
                                 {
-                                    pick_mol_idx = Some(r.mol_idx);
+                                    pick_mol_idx = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 ui.monospace(format!("{:.2}", r.observed_pact));
                                 ui.monospace(format!("{:+.2}", r.naive_network_dg_kcal));
@@ -23953,17 +24632,18 @@ impl SarAtlasGuiApp {
                 }
             });
 
-        if let Some(mi) = pick_mol_idx {
-            self.selected_mol = mi;
+        if let Some((id, mi)) = pick_mol_idx {
             self.hbn_use_sketcher = false;
             self.hbn_cached_key.clear();
+            self.select_mol_by_id_or_idx(&id, mi);
         }
     }
 
 
     fn render_induced_fit_tab(&mut self, ui: &mut egui::Ui) {
         let sel_idx = self.selected_mol.min(self.ds.mols.len().saturating_sub(1));
-        let mut pick_mol_idx: Option<usize> = None;
+        let camp_ds = self.active_campaign_dataset();
+        let mut pick_mol_idx: Option<(String, usize)> = None;
 
         ui.horizontal_wrapped(|ui| {
             ui.heading("Induced-Fit Side-Chain Rotamer Repacking & Boltzmann Ensemble Studio");
@@ -24027,13 +24707,14 @@ impl SarAtlasGuiApp {
                 self.ifd_screen_key.clear();
             }
             if ui.small_button("Screen Entire Dataset (5-State Ensemble)").clicked() {
-                self.ifd_screen_rows = screen_dataset_induced_fit_ensemble(&self.ds, &self.ifd_cfg);
+                self.ifd_screen_rows = screen_dataset_induced_fit_ensemble(&camp_ds, &self.ifd_cfg);
                 self.ifd_screen_key = format!(
-                    "{}|{}|{:.2}|{}",
+                    "{}|{}|{:.2}|{}|{}",
                     self.ifd_cfg.preset.code(),
                     self.ifd_cfg.max_flexible_residues,
                     self.ifd_cfg.soft_core_vdw_scale,
-                    self.ds.mols.len()
+                    self.target_filter,
+                    camp_ds.mols.len()
                 );
                 self.ifd_bottom_subtab = 1;
             }
@@ -24048,16 +24729,17 @@ impl SarAtlasGuiApp {
         };
 
         let cache_key = format!(
-            "{}|{:?}|{}|{:.2}|{}|{}",
+            "{}|{:?}|{}|{:.2}|{}|{}|{}",
             self.ifd_cfg.preset.code(),
             self.ifd_cfg.custom_pdb_path,
             self.ifd_cfg.max_flexible_residues,
             self.ifd_cfg.soft_core_vdw_scale,
+            self.target_filter,
             query_mol.id,
             query_mol.smiles
         );
         if self.ifd_cached_key != cache_key || self.ifd_report.is_none() {
-            let rep = score_ligand_induced_fit_ensemble(&query_mol, Some(&self.ds), &self.ifd_cfg);
+            let rep = score_ligand_induced_fit_ensemble(&query_mol, Some(&camp_ds), &self.ifd_cfg);
             self.ifd_active_state_idx = rep.dominant_state_idx;
             self.ifd_report = Some(rep);
             self.ifd_cached_key = cache_key;
@@ -24329,7 +25011,7 @@ impl SarAtlasGuiApp {
             {
                 if self.ifd_screen_rows.is_empty() {
                     self.ifd_screen_rows =
-                        screen_dataset_induced_fit_ensemble(&self.ds, &self.ifd_cfg);
+                        screen_dataset_induced_fit_ensemble(&camp_ds, &self.ifd_cfg);
                 }
                 self.ifd_bottom_subtab = 1;
             }
@@ -24430,23 +25112,22 @@ impl SarAtlasGuiApp {
 
                             for r in &self.ifd_screen_rows {
                                 let [cr, cg, cb] = r.mechanism.rgb();
+                                let is_sel =
+                                    !self.ifd_use_sketcher && self.is_active_lead_id(&r.compound_id);
                                 if ui
-                                    .selectable_label(
-                                        r.mol_idx == sel_idx,
-                                        format!("#{}", r.rank),
-                                    )
+                                    .selectable_label(is_sel, format!("#{}", r.rank))
                                     .clicked()
                                 {
-                                    pick_mol_idx = Some(r.mol_idx);
+                                    pick_mol_idx = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 if ui
                                     .selectable_label(
-                                        r.mol_idx == sel_idx,
+                                        is_sel,
                                         format!("{} ({})", r.compound_name, r.compound_id),
                                     )
                                     .clicked()
                                 {
-                                    pick_mol_idx = Some(r.mol_idx);
+                                    pick_mol_idx = Some((r.compound_id.clone(), r.mol_idx));
                                 }
                                 ui.monospace(format!("{:.2}", r.observed_pact));
                                 ui.monospace(format!("{:+.2}", r.rigid_holo_dg_kcal));
@@ -24471,10 +25152,10 @@ impl SarAtlasGuiApp {
                 }
             });
 
-        if let Some(mi) = pick_mol_idx {
-            self.selected_mol = mi;
+        if let Some((id, mi)) = pick_mol_idx {
             self.ifd_use_sketcher = false;
             self.ifd_cached_key.clear();
+            self.select_mol_by_id_or_idx(&id, mi);
         }
     }
 
@@ -24559,13 +25240,15 @@ impl SarAtlasGuiApp {
             });
         }
 
+        let camp_ds = self.active_campaign_dataset();
         let cache_key = format!(
-            "{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}",
             self.flink_cfg.preset.code(),
             self.flink_cfg.vector_pair_rank,
             self.flink_cfg.custom_frag_a_smiles,
             self.flink_cfg.custom_frag_b_smiles,
             self.flink_cfg.custom_pocket_idx,
+            self.target_filter,
             seed_sig
         );
         if self.flink_cached_key != cache_key || self.flink_report.is_none() {
@@ -24577,7 +25260,7 @@ impl SarAtlasGuiApp {
             self.flink_report = Some(design_linked_fragments(
                 &self.flink_cfg,
                 seed_ref,
-                Some(&self.ds),
+                Some(&camp_ds),
             ));
             self.flink_cached_key = cache_key;
             self.flink_selected_cand_idx = 0;
@@ -26686,6 +27369,7 @@ fn paint_rbfe_lomap_perturbation_graph(
     rep: &RbfeNetworkReport,
     selected_edge_idx: usize,
     selected_cycle_idx: Option<usize>,
+    active_lead_id: Option<&str>,
     click_pos: Option<Pos2>,
 ) -> Option<usize> {
     painter.rect(
@@ -26758,7 +27442,10 @@ fn paint_rbfe_lomap_perturbation_graph(
     // Draw ligand nodes
     for nd in &rep.nodes {
         let pt = screen_pt(nd.layout_xy);
-        let (fill, rad) = if nd.is_reference_anchor {
+        let is_active_lead = active_lead_id == Some(nd.compound_id.as_str());
+        let (fill, rad) = if is_active_lead {
+            (Color32::from_rgb(52, 211, 153), 6.8)
+        } else if nd.is_reference_anchor {
             (Color32::from_rgb(251, 191, 36), 6.5)
         } else if nd.is_prospective_custom {
             (Color32::from_rgb(192, 132, 252), 5.4)
@@ -26766,13 +27453,24 @@ fn paint_rbfe_lomap_perturbation_graph(
             (Color32::from_rgb(56, 189, 248), 4.8)
         };
         painter.circle_filled(pt, rad, fill);
+        if is_active_lead {
+            painter.circle_stroke(
+                pt,
+                rad + 3.0,
+                Stroke::new(1.8, Color32::from_rgb(16, 185, 129)),
+            );
+        }
         painter.circle_stroke(pt, rad + 1.0, Stroke::new(1.0, Color32::from_rgb(15, 23, 42)));
         painter.text(
             Pos2::new(pt.x, pt.y - rad - 5.5),
             egui::Align2::CENTER_CENTER,
             &nd.compound_id,
-            egui::FontId::monospace(8.0),
-            Color32::from_rgb(226, 232, 240),
+            egui::FontId::monospace(if is_active_lead { 8.6 } else { 8.0 }),
+            if is_active_lead {
+                Color32::from_rgb(110, 231, 183)
+            } else {
+                Color32::from_rgb(226, 232, 240)
+            },
         );
     }
 
@@ -27400,14 +28098,6 @@ pub fn run_screenshot(
     if !app.wgpu_ready {
         return Err("ChemSpaceGpuResources::initialize did not report wgpu_ready".to_string());
     }
-    if let Some(hal_idx) = app
-        .ds
-        .mols
-        .iter()
-        .position(|m| m.name.eq_ignore_ascii_case("Haloperidol"))
-    {
-        app.selected_mol = hal_idx;
-    }
     app.active_tab = match view_idx {
         1 => WorkbenchTab::SaliViewport,
         2 => WorkbenchTab::RbfeNetworkStudio,
@@ -27420,8 +28110,9 @@ pub fn run_screenshot(
     };
     app.show_left_panel = view_idx != 3;
     app.show_right_panel = view_idx != 2;
+    let camp_ds = app.active_campaign_dataset();
     app.pbpk_dataset_rows =
-        summarize_dataset_oral_pbpk(&app.ds.mols, app.pbpk_dose_mg as f64);
+        summarize_dataset_oral_pbpk(&camp_ds.mols, app.pbpk_dose_mg as f64);
     if let Some(mol) = app.ds.mols.get(app.selected_mol) {
         let cfg = PbpkDosingConfig {
             dose_mg: app.pbpk_dose_mg as f64,
@@ -27633,4 +28324,143 @@ fn write_rgba_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) 
     push_chunk(&mut png, b"IDAT", &zlib);
     push_chunk(&mut png, b"IEND", &[]);
     std::fs::write(path, &png).map_err(|e| format!("Failed writing PNG '{}': {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sar_core::load_benchmark_26;
+
+    #[test]
+    fn boots_coherent_egfr_campaign_and_five_pillars() {
+        let ds = DatasetAnalysis::from_molecules(load_benchmark_26(), 0.30, 6.0);
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx);
+        let mut app = SarAtlasApp::new(&cc, ds);
+
+        assert_eq!(WorkbenchDomain::ALL.len(), 5);
+        for tab in WorkbenchTab::ALL {
+            assert!(WorkbenchDomain::ALL.contains(&tab.domain()));
+        }
+
+        assert_eq!(app.target_filter, "EGFR");
+        assert_eq!(app.campaign_workspace.preset, CampaignSeriesPreset::Egfr1m17);
+        assert_eq!(app.campaign_workspace.pdb_id, "1M17");
+        assert_eq!(app.campaign_workspace.series_count, 8);
+        assert_eq!(app.ds.mols[app.selected_mol].target, "EGFR");
+        assert_eq!(app.ds.mols[app.selected_mol].id, "BRIDGES-56");
+        assert_eq!(app.pocket_preset_idx, 0);
+        assert_eq!(
+            app.wm_cfg.preset,
+            WaterMapPreset::Egfr1m17BackPocketAndHingeBridge
+        );
+        assert_eq!(
+            app.esp_cfg.preset,
+            EspTargetPreset::Egfr1m17AnilineHalogenAndHingeEsp
+        );
+        assert_eq!(app.sel_pair_idx, 1);
+        assert_eq!(
+            app.hbn_cfg.preset,
+            HBondNetworkPreset::Egfr1m17Thr790WaterBridge
+        );
+        assert_eq!(
+            app.ifd_cfg.preset,
+            InducedFitPreset::Egfr1m17GatekeeperAndBackPocket
+        );
+        assert_eq!(app.prodrug_source_mode, 1);
+        assert_eq!(app.pbpk_dataset_rows.len(), 8);
+        assert!(app
+            .pbpk_dataset_rows
+            .iter()
+            .all(|r| r.target == "EGFR"));
+
+        let camp_ds = app.active_campaign_dataset();
+        assert_eq!(camp_ds.mols.len(), 8);
+        let rbfe = run_rbfe_network_campaign(&camp_ds, &app.rbfe_cfg);
+        assert_eq!(rbfe.pocket_pdb_id, "1M17");
+    }
+
+    #[test]
+    fn switching_campaigns_and_stepping_lead_syncs_all_studios() {
+        let ds = DatasetAnalysis::from_molecules(load_benchmark_26(), 0.30, 6.0);
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx);
+        let mut app = SarAtlasApp::new(&cc, ds);
+
+        // Step active lead stays strictly inside active EGFR series
+        let initial_id = app.ds.mols[app.selected_mol].id.clone();
+        app.step_active_lead(1);
+        assert_eq!(app.ds.mols[app.selected_mol].target, "EGFR");
+        assert_ne!(app.ds.mols[app.selected_mol].id, initial_id);
+
+        // Switch to Dopamine D2 (6CM4)
+        app.switch_campaign("Dopamine D2");
+        assert_eq!(app.campaign_workspace.preset, CampaignSeriesPreset::Drd26cm4);
+        assert_eq!(app.campaign_workspace.pdb_id, "6CM4");
+        assert_eq!(app.ds.mols[app.selected_mol].target, "Dopamine D2");
+        assert_eq!(app.pocket_preset_idx, 1);
+        assert_eq!(
+            app.wm_cfg.preset,
+            WaterMapPreset::Drd26cm4OrthostericCageHydration
+        );
+        assert_eq!(
+            app.esp_cfg.preset,
+            EspTargetPreset::Drd26cm4CationPiAromaticCage
+        );
+        assert_eq!(app.sel_pair_idx, 2);
+        assert_eq!(
+            app.hbn_cfg.preset,
+            HBondNetworkPreset::Drd26cm4Asp114WaterSaltBridge
+        );
+        assert_eq!(
+            app.ifd_cfg.preset,
+            InducedFitPreset::Drd26cm4ToggleSwitchAndCage
+        );
+        assert_eq!(app.dossier_profile, CampaignTargetProfile::OralCnsPenetrant);
+        assert_eq!(app.pbpk_dataset_rows.len(), 11);
+        let drd2_ds = app.active_campaign_dataset();
+        let rbfe_drd2 = run_rbfe_network_campaign(&drd2_ds, &app.rbfe_cfg);
+        assert_eq!(rbfe_drd2.pocket_pdb_id, "6CM4");
+
+        // Switch to COX-2 (3LN1)
+        app.switch_campaign("COX-2");
+        assert_eq!(app.campaign_workspace.preset, CampaignSeriesPreset::Cox23ln1);
+        assert_eq!(app.campaign_workspace.pdb_id, "3LN1");
+        assert_eq!(app.ds.mols[app.selected_mol].target, "COX-2");
+        assert_eq!(app.pocket_preset_idx, 2);
+        assert_eq!(
+            app.wm_cfg.preset,
+            WaterMapPreset::Cox23ln1DewettedHydrophobicChannel
+        );
+        assert_eq!(
+            app.esp_cfg.preset,
+            EspTargetPreset::Cox23ln1SulfonamideAndChannelEsp
+        );
+        assert_eq!(app.sel_pair_idx, 0);
+        assert_eq!(
+            app.hbn_cfg.preset,
+            HBondNetworkPreset::Cox23ln1His90Gln178Sulfonamide
+        );
+        assert_eq!(
+            app.ifd_cfg.preset,
+            InducedFitPreset::Cox23ln1Arg513AndSidePocket
+        );
+        assert_eq!(app.pbpk_dataset_rows.len(), 5);
+        let cox2_ds = app.active_campaign_dataset();
+        let rbfe_cox2 = run_rbfe_network_campaign(&cox2_ds, &app.rbfe_cfg);
+        assert_eq!(rbfe_cox2.pocket_pdb_id, "3LN1");
+
+        // Global SMILES/Scaffold search narrows visible_mask inside campaign
+        app.switch_campaign("EGFR");
+        app.search_query = "Gefitinib".to_string();
+        app.rebuild_visibility_and_gpu();
+        let vis_count = app.visible_mask.iter().filter(|&&v| v).count();
+        assert_eq!(vis_count, 1);
+
+        // Switching to All Loaded exposes full benchmark dataset
+        app.search_query.clear();
+        app.switch_campaign("All");
+        assert_eq!(app.campaign_workspace.preset, CampaignSeriesPreset::AllLoaded);
+        assert_eq!(app.pbpk_dataset_rows.len(), app.ds.mols.len());
+    }
 }

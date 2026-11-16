@@ -78,6 +78,8 @@ pub enum WaterMapPreset {
     Egfr1m17BackPocketAndHingeBridge,
     /// `PDB 3LN1` (`COX-2`): Young-Friesner (2007) persistent hydrophobic-enclosure channel dewetting (`Val349/Leu352/Trp387`) + `His90/Arg513` polar side-pocket waters.
     Cox23ln1DewettedHydrophobicChannel,
+    /// `PDB 6CM4` (`DRD2`): `Asp114` (`D3.32`) salt-bridge hydration & `Trp386/Phe389/Phe390` aromatic cage waters.
+    Drd26cm4OrthostericCageHydration,
     /// `PDB 6OIM` (`KRAS G12C`): Switch-II cryptic `His95/Tyr96/Gln99` entropically ordered waters + lipophilic `Met72/Val9` sub-pocket hotspots.
     Kras6oimSwitchIiCrypticSolvation,
     /// User-supplied `.pdb` receptor with automatic 3D `GIST` voxel solvation & `1.0 A` `QT` hydration-site clustering.
@@ -85,10 +87,11 @@ pub enum WaterMapPreset {
 }
 
 impl WaterMapPreset {
-    pub const ALL: [Self; 5] = [
-        Self::FactorXa1ezqS1S4Hotspots,
+    pub const ALL: [Self; 6] = [
         Self::Egfr1m17BackPocketAndHingeBridge,
+        Self::Drd26cm4OrthostericCageHydration,
         Self::Cox23ln1DewettedHydrophobicChannel,
+        Self::FactorXa1ezqS1S4Hotspots,
         Self::Kras6oimSwitchIiCrypticSolvation,
         Self::CustomPdbWaterMap,
     ];
@@ -97,6 +100,7 @@ impl WaterMapPreset {
         match self {
             Self::FactorXa1ezqS1S4Hotspots => "WM-1EZQ-FXA-S1S4",
             Self::Egfr1m17BackPocketAndHingeBridge => "WM-1M17-EGFR-ATP",
+            Self::Drd26cm4OrthostericCageHydration => "WM-6CM4-DRD2-CAGE",
             Self::Cox23ln1DewettedHydrophobicChannel => "WM-3LN1-COX2-DEWET",
             Self::Kras6oimSwitchIiCrypticSolvation => "WM-6OIM-KRAS-SWII",
             Self::CustomPdbWaterMap => "WM-CUSTOM-PDB",
@@ -107,6 +111,7 @@ impl WaterMapPreset {
         match self {
             Self::FactorXa1ezqS1S4Hotspots => "Factor Xa 1EZQ (S1+S4)",
             Self::Egfr1m17BackPocketAndHingeBridge => "EGFR 1M17 (Bridge+Back)",
+            Self::Drd26cm4OrthostericCageHydration => "DRD2 6CM4 (Asp114+Cage)",
             Self::Cox23ln1DewettedHydrophobicChannel => "COX-2 3LN1 (Dewetted)",
             Self::Kras6oimSwitchIiCrypticSolvation => "KRAS 6OIM (Switch-II)",
             Self::CustomPdbWaterMap => "Custom .PDB WaterMap",
@@ -120,6 +125,9 @@ impl WaterMapPreset {
             }
             Self::Egfr1m17BackPocketAndHingeBridge => {
                 "EGFR Kinase (1M17): Conserved Thr790/Gln791 Structural Bridge vs Back-Pocket Unhappy Waters"
+            }
+            Self::Drd26cm4OrthostericCageHydration => {
+                "Dopamine D2 (6CM4): Asp114 Salt-Bridge Hydration & Trp386/Phe389/Phe390 Aromatic Cage Waters"
             }
             Self::Cox23ln1DewettedHydrophobicChannel => {
                 "COX-2 (3LN1): Dewetted Paraffin-Like Channel Hotspots & His90/Arg513 Sulfonamide Pocket"
@@ -339,7 +347,7 @@ pub struct WaterMapConfig {
 impl Default for WaterMapConfig {
     fn default() -> Self {
         Self {
-            preset: WaterMapPreset::FactorXa1ezqS1S4Hotspots,
+            preset: WaterMapPreset::Egfr1m17BackPocketAndHingeBridge,
             custom_pdb_path: None,
             gist_voxel_spacing_a: 0.75,
             displacement_cutoff_a: WATERMAP_DISPLACEMENT_CUTOFF_A,
@@ -499,6 +507,11 @@ pub fn load_watermap_pdb(
             parse_pdb_structure(curated_pocket_pdb_text(0)).expect("Valid 1M17 EGFR PDB"),
             None,
             "EGFR".to_string(),
+        ),
+        WaterMapPreset::Drd26cm4OrthostericCageHydration => (
+            parse_pdb_structure(curated_pocket_pdb_text(1)).expect("Valid 6CM4 DRD2 PDB"),
+            None,
+            "DRD2".to_string(),
         ),
         WaterMapPreset::Cox23ln1DewettedHydrophobicChannel => (
             parse_pdb_structure(curated_pocket_pdb_text(2)).expect("Valid 3LN1 COX-2 PDB"),

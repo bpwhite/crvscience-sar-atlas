@@ -79,16 +79,19 @@ pub enum EspTargetPreset {
     Drd26cm4CationPiAromaticCage,
     /// `PDB 6OIM` (`KRAS G12C`): Fluorinated quinazolinone + `His95/Tyr96` `Wheeler-Houk` `pi-stacking` & Switch-II `ESP` groove!
     Kras6oimFluorinatedPiGroove,
+    /// `PDB 3LN1` (`COX-2`): `Arg513`/`His90` sulfonamide polar side-pocket & hydrophobic `CF3`-pyrazole channel `ESP` match!
+    Cox23ln1SulfonamideAndChannelEsp,
     /// User-supplied `.pdb` receptor for custom 3D `ESP` complementarity & `sigma-hole` mapping.
     CustomPdbEspComplementarity,
 }
 
 impl EspTargetPreset {
-    pub const ALL: [Self; 6] = [
-        Self::FactorXa1ezqHalogenAndS4PiBox,
-        Self::Vhl5nvxThiazoleChalcogenLock,
+    pub const ALL: [Self; 7] = [
         Self::Egfr1m17AnilineHalogenAndHingeEsp,
         Self::Drd26cm4CationPiAromaticCage,
+        Self::Cox23ln1SulfonamideAndChannelEsp,
+        Self::FactorXa1ezqHalogenAndS4PiBox,
+        Self::Vhl5nvxThiazoleChalcogenLock,
         Self::Kras6oimFluorinatedPiGroove,
         Self::CustomPdbEspComplementarity,
     ];
@@ -99,6 +102,7 @@ impl EspTargetPreset {
             Self::Vhl5nvxThiazoleChalcogenLock => "ESP-5NVX-VHL-CHB",
             Self::Egfr1m17AnilineHalogenAndHingeEsp => "ESP-1M17-EGFR-ESP",
             Self::Drd26cm4CationPiAromaticCage => "ESP-6CM4-DRD2-CATPI",
+            Self::Cox23ln1SulfonamideAndChannelEsp => "ESP-3LN1-COX2-SULF",
             Self::Kras6oimFluorinatedPiGroove => "ESP-6OIM-KRAS-PIGRV",
             Self::CustomPdbEspComplementarity => "ESP-CUSTOM-PDB",
         }
@@ -110,6 +114,7 @@ impl EspTargetPreset {
             Self::Vhl5nvxThiazoleChalcogenLock => "VHL 5NVX (S..O Chalcogen)",
             Self::Egfr1m17AnilineHalogenAndHingeEsp => "EGFR 1M17 (Cl-Hole+Hinge)",
             Self::Drd26cm4CationPiAromaticCage => "DRD2 6CM4 (Cation-Pi)",
+            Self::Cox23ln1SulfonamideAndChannelEsp => "COX-2 3LN1 (Sulf+Pi)",
             Self::Kras6oimFluorinatedPiGroove => "KRAS 6OIM (F-Arene Pi)",
             Self::CustomPdbEspComplementarity => "Custom .PDB ESP",
         }
@@ -128,6 +133,9 @@ impl EspTargetPreset {
             }
             Self::Drd26cm4CationPiAromaticCage => {
                 "Dopamine D2 (6CM4): Trp386/Phe389/Phe390 Cation-Pi Cage & Asp114 Electrostatic Match"
+            }
+            Self::Cox23ln1SulfonamideAndChannelEsp => {
+                "COX-2 (3LN1): Arg513/His90 Sulfonamide Side-Pocket & Hydrophobic Pyrazole Channel ESP"
             }
             Self::Kras6oimFluorinatedPiGroove => {
                 "KRAS G12C (6OIM): Wheeler-Houk Fluorinated Arene His95/Tyr96 Pi-Stack & Switch-II ESP"
@@ -290,7 +298,7 @@ pub struct ElectrostaticsEspConfig {
 impl Default for ElectrostaticsEspConfig {
     fn default() -> Self {
         Self {
-            preset: EspTargetPreset::FactorXa1ezqHalogenAndS4PiBox,
+            preset: EspTargetPreset::Egfr1m17AnilineHalogenAndHingeEsp,
             custom_pdb_path: None,
             interface_dielectric: 4.0,
             enable_xed_multipoles: true,
@@ -444,6 +452,11 @@ pub fn load_esp_target_pdb(
             parse_pdb_structure(curated_pocket_pdb_text(1)).expect("Valid 6CM4 PDB"),
             None,
             "DRD2".to_string(),
+        ),
+        EspTargetPreset::Cox23ln1SulfonamideAndChannelEsp => (
+            parse_pdb_structure(curated_pocket_pdb_text(2)).expect("Valid 3LN1 PDB"),
+            None,
+            "COX-2".to_string(),
         ),
         EspTargetPreset::Kras6oimFluorinatedPiGroove => (
             parse_pdb_structure(curated_allosteric_pdb_text(1)).expect("Valid 6OIM PDB"),

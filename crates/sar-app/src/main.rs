@@ -1545,6 +1545,7 @@ fn main() {
                     "vhl" | "5nvx" => EspTargetPreset::Vhl5nvxThiazoleChalcogenLock,
                     "egfr" | "1m17" => EspTargetPreset::Egfr1m17AnilineHalogenAndHingeEsp,
                     "drd2" | "6cm4" => EspTargetPreset::Drd26cm4CationPiAromaticCage,
+                    "cox2" | "3ln1" => EspTargetPreset::Cox23ln1SulfonamideAndChannelEsp,
                     "kras" | "6oim" => EspTargetPreset::Kras6oimFluorinatedPiGroove,
                     _ => EspTargetPreset::FactorXa1ezqHalogenAndS4PiBox,
                 }
@@ -1942,6 +1943,7 @@ Co-Crystallized Ligands Extracted:");
             } else {
                 match preset.trim().to_ascii_lowercase().as_str() {
                     "egfr" | "1m17" => WaterMapPreset::Egfr1m17BackPocketAndHingeBridge,
+                    "drd2" | "6cm4" => WaterMapPreset::Drd26cm4OrthostericCageHydration,
                     "cox2" | "3ln1" => WaterMapPreset::Cox23ln1DewettedHydrophobicChannel,
                     "kras" | "6oim" => WaterMapPreset::Kras6oimSwitchIiCrypticSolvation,
                     _ => WaterMapPreset::FactorXa1ezqS1S4Hotspots,

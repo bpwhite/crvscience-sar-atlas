@@ -371,7 +371,7 @@ pub fn run_tui(ds: &DatasetAnalysis) -> io::Result<()> {
             || cmd.eq_ignore_ascii_case("halogen")
         {
             state.tab_idx = 22;
-            state.esp_preset_idx = (state.esp_preset_idx + 1) % 5;
+            state.esp_preset_idx = (state.esp_preset_idx + 1) % 6;
             let pr = EspTargetPreset::ALL[state.esp_preset_idx];
             state.status_msg = format!(
                 "Switched 3D ESP, Sigma-Hole & Pi-Multipole target to {} ({}).",
@@ -427,7 +427,7 @@ pub fn run_tui(ds: &DatasetAnalysis) -> io::Result<()> {
         }
         if cmd.eq_ignore_ascii_case("m") || cmd.eq_ignore_ascii_case("watermap") || cmd.eq_ignore_ascii_case("ifst") {
             state.tab_idx = 19;
-            state.wm_preset_idx = (state.wm_preset_idx + 1) % 4;
+            state.wm_preset_idx = (state.wm_preset_idx + 1) % 5;
             let pr = WaterMapPreset::ALL[state.wm_preset_idx];
             state.status_msg = format!(
                 "Switched WaterMap / IFST solvation active site to {} ({}).",
@@ -1618,7 +1618,7 @@ fn render_ansi_frame(
             }
         }
         ConsoleTab::WaterMapSolvation => {
-            let pr = WaterMapPreset::ALL[state.wm_preset_idx % 4];
+            let pr = WaterMapPreset::ALL[state.wm_preset_idx % 5];
             let cfg = WaterMapConfig {
                 preset: pr,
                 ..WaterMapConfig::default()
@@ -1786,7 +1786,7 @@ fn render_ansi_frame(
             }
         }
         ConsoleTab::ElectrostaticsEsp => {
-            let pr = EspTargetPreset::ALL[state.esp_preset_idx % 5];
+            let pr = EspTargetPreset::ALL[state.esp_preset_idx % 6];
             let cfg = ElectrostaticsEspConfig {
                 preset: pr,
                 ..ElectrostaticsEspConfig::default()
