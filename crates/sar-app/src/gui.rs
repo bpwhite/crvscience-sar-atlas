@@ -1,3 +1,18 @@
+// Copyright (C) 2026 CRV Science Network (https://crvscience.com)
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://gnu.org>.
+
 //! Interactive `eframe` / `egui` desktop workbench (`sar-atlas gui`, `v3.8.0`) featuring a native
 //! top menu bar, 5-domain categorized navigation ribbon, `Ctrl+K` fuzzy module/compound command
 //! palette, collapsible left/right side panels + `F11` Zen mode, grouped inspector menus, and 39 tabs:
@@ -2088,6 +2103,12 @@ impl SarAtlasGuiApp {
 
 impl eframe::App for SarAtlasGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.draw_ui(ctx);
+    }
+}
+
+impl SarAtlasGuiApp {
+    fn draw_ui(&mut self, ctx: &egui::Context) {
         self.poll_background_ingest(ctx);
         self.poll_background_funnel(ctx);
 
@@ -3027,6 +3048,29 @@ impl SarAtlasGuiApp {
                                 sa.tractability.short_label(),
                                 sa.brics_cleavable_bonds,
                                 sa.brics_synthon_count
+                            ),
+                        );
+                        ui.end_row();
+
+                        let pbpk_fast = simulate_oral_pbpk(
+                            mol,
+                            PbpkDosingConfig {
+                                dose_mg: self.pbpk_dose_mg as f64,
+                                regimen: self.pbpk_regimen,
+                                prandial: self.pbpk_prandial,
+                                inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+                            },
+                        );
+                        let [pbr, pbg, pbb] = pbpk_fast.cns_class.rgb();
+                        ui.label("Oral PBPK / Kp,uu:");
+                        ui.colored_label(
+                            Color32::from_rgb(pbr, pbg, pbb),
+                            format!(
+                                "F {:.1}% | Kp,uu {:.2} ({}) | Brain Cmax {:.1} nM",
+                                pbpk_fast.f_oral_pct,
+                                pbpk_fast.kp_uu_brain,
+                                pbpk_fast.cns_class.short_label(),
+                                pbpk_fast.cmax_unbound_brain_nm
                             ),
                         );
                         ui.end_row();
@@ -27270,4 +27314,323 @@ fn paint_dmta_round_convergence_plot(
         egui::FontId::proportional(9.0),
         Color32::from_rgb(203, 213, 225),
     );
+}
+
+pub fn run_screenshot(
+    ds: DatasetAnalysis,
+    out_path: &std::path::Path,
+    view_idx: u8,
+) -> Result<(), String> {
+    const WIDTH: u32 = 1600;
+    const HEIGHT: u32 = 1000;
+    const BYTES_PER_ROW: u32 = WIDTH * 4;
+
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
+        ..Default::default()
+    });
+    let adapter = block_on_wgpu(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
+    .or_else(|| {
+        block_on_wgpu(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::None,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        }))
+    })
+    .ok_or_else(|| "No wgpu adapter available for offscreen screenshot".to_string())?;
+
+    let mut limits = wgpu::Limits::default();
+    limits.max_texture_dimension_2d = adapter.limits().max_texture_dimension_2d.min(8192);
+    let (device, queue) = block_on_wgpu(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("sar_atlas_offscreen_device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: limits,
+            memory_hints: Default::default(),
+        },
+        None,
+    ))
+    .map_err(|e| format!("wgpu request_device failed: {e}"))?;
+
+    let target_format = wgpu::TextureFormat::Rgba8Unorm;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sar_atlas_offscreen_target"),
+        size: wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: target_format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("sar_atlas_offscreen_staging"),
+        size: u64::from(BYTES_PER_ROW) * u64::from(HEIGHT),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let renderer = Arc::new(eframe::epaint::mutex::RwLock::new(
+        egui_wgpu::Renderer::new(&device, target_format, None, 1, false),
+    ));
+    let render_state = egui_wgpu::RenderState {
+        adapter,
+        #[cfg(not(target_arch = "wasm32"))]
+        available_adapters: Vec::new(),
+        device: device.clone(),
+        queue: queue.clone(),
+        target_format,
+        renderer: Arc::clone(&renderer),
+    };
+
+    let ctx = egui::Context::default();
+    let mut cc = eframe::CreationContext::_new_kittest(ctx.clone());
+    cc.wgpu_render_state = Some(render_state);
+
+    let mut app = SarAtlasGuiApp::new(&cc, ds);
+    if !app.wgpu_ready {
+        return Err("ChemSpaceGpuResources::initialize did not report wgpu_ready".to_string());
+    }
+    if let Some(hal_idx) = app
+        .ds
+        .mols
+        .iter()
+        .position(|m| m.name.eq_ignore_ascii_case("Haloperidol"))
+    {
+        app.selected_mol = hal_idx;
+    }
+    app.active_tab = match view_idx {
+        1 => WorkbenchTab::SaliViewport,
+        2 => WorkbenchTab::RbfeNetworkStudio,
+        3 => WorkbenchTab::CypAndMetabolites,
+        other => {
+            return Err(format!(
+                "Unsupported --screenshot-view {other} (expected 1, 2, or 3)"
+            ));
+        }
+    };
+    app.show_left_panel = view_idx != 3;
+    app.show_right_panel = view_idx != 2;
+    app.pbpk_dataset_rows =
+        summarize_dataset_oral_pbpk(&app.ds.mols, app.pbpk_dose_mg as f64);
+    if let Some(mol) = app.ds.mols.get(app.selected_mol) {
+        let cfg = PbpkDosingConfig {
+            dose_mg: app.pbpk_dose_mg as f64,
+            regimen: app.pbpk_regimen,
+            prandial: app.pbpk_prandial,
+            inhibit_bbb_efflux: app.pbpk_inhibit_bbb_efflux,
+        };
+        app.pbpk_report = Some(simulate_oral_pbpk(mol, cfg));
+    }
+    app.scene_dirty = true;
+    app.heatmap_dirty = true;
+
+    let screen_desc = egui_wgpu::ScreenDescriptor {
+        size_in_pixels: [WIDTH, HEIGHT],
+        pixels_per_point: 1.0,
+    };
+
+    for frame_idx in 0..4usize {
+        let mut raw_input = egui::RawInput::default();
+        raw_input.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(WIDTH as f32, HEIGHT as f32),
+        ));
+        raw_input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .and_modify(|v| v.native_pixels_per_point = Some(1.0));
+        raw_input.time = Some(frame_idx as f64 / 60.0);
+        ctx.set_pixels_per_point(1.0);
+
+        let full_output = ctx.run(raw_input, |c| app.draw_ui(c));
+        let paint_jobs = ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+
+        {
+            let mut r = renderer.write();
+            for (id, delta) in &full_output.textures_delta.set {
+                r.update_texture(&device, &queue, *id, delta);
+            }
+        }
+
+        let mut prep_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("sar_atlas_offscreen_prep"),
+        });
+        let user_cmds = {
+            let mut r = renderer.write();
+            r.update_buffers(&device, &queue, &mut prep_encoder, &paint_jobs, &screen_desc)
+        };
+        queue.submit(user_cmds.into_iter().chain(std::iter::once(prep_encoder.finish())));
+
+        let mut pass_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("sar_atlas_offscreen_pass_encoder"),
+        });
+        {
+            let r = renderer.read();
+            let mut rpass = pass_encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("sar_atlas_offscreen_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.04,
+                                g: 0.06,
+                                b: 0.11,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                })
+                .forget_lifetime();
+            r.render(&mut rpass, &paint_jobs, &screen_desc);
+        }
+
+        if frame_idx == 3 {
+            pass_encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &staging,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(BYTES_PER_ROW),
+                        rows_per_image: Some(HEIGHT),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: WIDTH,
+                    height: HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        queue.submit(std::iter::once(pass_encoder.finish()));
+        {
+            let mut r = renderer.write();
+            for id in &full_output.textures_delta.free {
+                r.free_texture(id);
+            }
+        }
+        device.poll(wgpu::Maintain::Wait);
+    }
+
+    let slice = staging.slice(..);
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    slice.map_async(wgpu::MapMode::Read, move |res| {
+        let _ = tx.send(res);
+    });
+    device.poll(wgpu::Maintain::Wait);
+    rx.recv()
+        .map_err(|e| format!("GPU readback channel failed: {e}"))?
+        .map_err(|e| format!("GPU buffer map failed: {e}"))?;
+
+    let rgba = slice.get_mapped_range().to_vec();
+    staging.unmap();
+    write_rgba_png(out_path, WIDTH, HEIGHT, &rgba)
+}
+
+fn block_on_wgpu<F: std::future::Future>(fut: F) -> F::Output {
+    struct ThreadWaker(std::thread::Thread);
+    impl std::task::Wake for ThreadWaker {
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &std::sync::Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = std::task::Waker::from(std::sync::Arc::new(ThreadWaker(std::thread::current())));
+    let mut fut = std::pin::pin!(fut);
+    let mut cx = std::task::Context::from_waker(&waker);
+    loop {
+        match fut.as_mut().poll(&mut cx) {
+            std::task::Poll::Ready(out) => return out,
+            std::task::Poll::Pending => std::thread::park(),
+        }
+    }
+}
+
+fn write_rgba_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+    if rgba.len() != (width as usize) * (height as usize) * 4 {
+        return Err("RGBA buffer length mismatch".to_string());
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+        }
+    }
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut c = !0u32;
+        for &b in bytes {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = (c >> 1) ^ (0xEDB8_8320 & (0u32.wrapping_sub(c & 1)));
+            }
+        }
+        !c
+    }
+    fn push_chunk(out: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let start = out.len();
+        out.extend_from_slice(tag);
+        out.extend_from_slice(data);
+        out.extend_from_slice(&crc32(&out[start..]).to_be_bytes());
+    }
+    let row_bytes = (width as usize) * 4;
+    let mut raw = Vec::with_capacity((row_bytes + 1) * (height as usize));
+    for row in rgba.chunks_exact(row_bytes) {
+        raw.push(0);
+        raw.extend_from_slice(row);
+    }
+    let (mut s1, mut s2) = (1u32, 0u32);
+    for &b in &raw {
+        s1 = (s1 + u32::from(b)) % 65521;
+        s2 = (s2 + s1) % 65521;
+    }
+    let mut zlib = Vec::with_capacity(raw.len() + 64);
+    zlib.extend_from_slice(&[0x78, 0x01]);
+    let mut off = 0usize;
+    while off < raw.len() {
+        let end = (off + u16::MAX as usize).min(raw.len());
+        let block = &raw[off..end];
+        let len = block.len() as u16;
+        zlib.push(u8::from(end == raw.len()));
+        zlib.extend_from_slice(&len.to_le_bytes());
+        zlib.extend_from_slice(&(!len).to_le_bytes());
+        zlib.extend_from_slice(block);
+        off = end;
+    }
+    zlib.extend_from_slice(&((s2 << 16) | s1).to_be_bytes());
+
+    let mut png = Vec::with_capacity(zlib.len() + 64);
+    png.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    push_chunk(&mut png, b"IHDR", &ihdr);
+    push_chunk(&mut png, b"IDAT", &zlib);
+    push_chunk(&mut png, b"IEND", &[]);
+    std::fs::write(path, &png).map_err(|e| format!("Failed writing PNG '{}': {e}", path.display()))
 }

@@ -1,3 +1,18 @@
+// Copyright (C) 2026 CRV Science Network (https://crvscience.com)
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://gnu.org>.
+
 //! Daylight SMARTS (`https://www.daylight.com/dayhtml/doc/theory/theory.smarts.html`)
 //! substructure query compiler and `GreatestConstraintFirst` + `VF2` (`Cordella et al. 2004`,
 //! `Bonnici & Giugno 2013`, `https://pmc.ncbi.nlm.nih.gov/articles/PMC3633016/`) subgraph

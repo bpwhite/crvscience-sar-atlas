@@ -1,3 +1,18 @@
+// Copyright (C) 2026 CRV Science Network (https://crvscience.com)
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://gnu.org>.
+
 //! 3D Molecular Electrostatic Potential (`ESP`) Surface Mapper, Off-Nucleus `XED`-Style Atomic
 //! Multipole Builder (`Sigma-Hole` Crowns, Lone-Pair Lobes & Aromatic `Pi`-Quadrupoles),
 //! `Bauer-Mackey` Protein-Ligand Electrostatic Complementarity (`EC`, `EC_r`, `EC_rho`),

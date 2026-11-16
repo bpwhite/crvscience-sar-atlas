@@ -1,3 +1,18 @@
+// Copyright (C) 2026 CRV Science Network (https://crvscience.com)
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://gnu.org>.
+
 //! Core-aligned `R1/R2/R3/R4` R-group decomposition and Ridge-regularized Free-Wilson QSAR
 //! matrix solver & live single-molecule analog potency predictor:
 //! - Free & Wilson (1964), *J. Med. Chem.* 7, 395-399 (`https://pubmed.ncbi.nlm.nih.gov/14221113/`)

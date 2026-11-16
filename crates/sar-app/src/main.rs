@@ -1,3 +1,18 @@
+// Copyright (C) 2026 CRV Science Network (https://crvscience.com)
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://gnu.org>.
+
 //! `sar-atlas` (`v3.8.0`): Unified CLI, Native ANSI Terminal Console, and 5-Domain `eframe`/`wgpu` Desktop
 //! Workbench for small-molecule cheminformatics, interactive 2D molecular sketching, quantitative
 //! ADMET, mechanistic oral `PBPK` (`ACAT`, hepatic first-pass `Fg*Fh`, & unbound brain `Kp,uu,brain`),
@@ -77,6 +92,14 @@ use std::time::Instant;
     about = "SAR-Atlas v3.8.0 — 5-Domain Small-Molecule, FBDD, Macrocycle, PROTAC, SMARTCyp, Prodrug & Oral PBPK Cheminformatics Workbench"
 )]
 struct Cli {
+    /// Render an offscreen 1600x1000 GPU screenshot of the default SAR-Atlas workbench to PNG and exit.
+    #[arg(long, value_name = "PNG_PATH")]
+    screenshot: Option<PathBuf>,
+
+    /// Select which workbench view to capture (1 = Chemical Space & SALI, 2 = RBFE Network, 3 = CYP & Metabolites).
+    #[arg(long, value_name = "VIEW", default_value_t = 1)]
+    screenshot_view: u8,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -98,6 +121,13 @@ enum Commands {
         hts_synthetic: Option<usize>,
         #[arg(long, default_value_t = true)]
         vsync: bool,
+        /// Render an offscreen 1600x1000 GPU screenshot to PNG and exit without opening a window.
+        #[arg(long, value_name = "PNG_PATH")]
+        screenshot: Option<PathBuf>,
+
+        /// Select which workbench view to capture (1 = Chemical Space & SALI, 2 = RBFE Network, 3 = CYP & Metabolites).
+        #[arg(long, value_name = "VIEW", default_value_t = 1)]
+        screenshot_view: u8,
     },
     /// Launch the standalone zero-dependency ANSI terminal console.
     Tui {
@@ -1251,22 +1281,40 @@ fn load_dataset_or_project(
 fn main() {
     let cli = Cli::parse();
 
+    if let Some(out_path) = cli.screenshot {
+        let ds = load_dataset_or_project(None, 0.30, 6.0);
+        if let Err(err) = gui::run_screenshot(ds, &out_path, cli.screenshot_view) {
+            eprintln!("Headless screenshot error: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     match cli.command.unwrap_or(Commands::Gui {
         input: None,
         hts_synthetic: None,
         vsync: true,
+        screenshot: None,
+        screenshot_view: 1,
     }) {
         Commands::Gui {
             input,
             hts_synthetic,
             vsync,
+            screenshot,
+            screenshot_view,
         } => {
             let ds = if let Some(n) = hts_synthetic {
                 DatasetAnalysis::from_molecules(synthesize_hts_library(n.max(10)), 0.45, 8.0)
             } else {
                 load_dataset_or_project(input.as_ref(), 0.30, 6.0)
             };
-            if let Err(err) = gui::run_gui(ds, vsync) {
+            if let Some(out_path) = screenshot {
+                if let Err(err) = gui::run_screenshot(ds, &out_path, screenshot_view) {
+                    eprintln!("Headless screenshot error: {err}");
+                    std::process::exit(1);
+                }
+            } else if let Err(err) = gui::run_gui(ds, vsync) {
                 eprintln!("GUI error: {err}");
                 std::process::exit(1);
             }

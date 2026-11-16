@@ -1,3 +1,18 @@
+// Copyright (C) 2026 CRV Science Network (https://crvscience.com)
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://gnu.org>.
+
 //! Tactical Medicinal-Chemistry Bioisostere & Late-Stage Analog Enumerator:
 //! - Meanwell (2011), *J. Med. Chem.* 54(8), 2529-2591 (`https://pubmed.ncbi.nlm.nih.gov/21413808/`)
 //! - Scans a lead or sketched `Molecule` for replaceable pharmacophoric motifs, performs exact
