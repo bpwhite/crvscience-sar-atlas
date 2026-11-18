@@ -163,8 +163,8 @@ pub use fragment_linker::{
     MURRAY_VERDONK_RIGID_ENTROPY_KCAL,
 };
 pub use gpu_pack::{
-    build_chem_heatmap_rgba, pack_gpu_scene, viridis_rgb, GpuCameraUniform, GpuEdgeInstance,
-    GpuNodeInstance, HeatmapLayer, NodeColorMode, HEATMAP_DIM,
+    build_chem_heatmap_rgba, inferno_cliff_rgb, pack_gpu_scene, viridis_rgb, GpuCameraUniform,
+    GpuEdgeInstance, GpuNodeInstance, HeatmapLayer, NodeColorMode, HEATMAP_DIM,
 };
 pub use electrostatics_esp::{
     analyze_electrostatics_esp, analyze_esp_with_prebuilt, export_dataset_esp_screen_csv,
@@ -576,7 +576,12 @@ impl DatasetAnalysis {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        let mols = if ext == "sdf" || ext == "mol" || raw.contains("V2000") {
+        let mols = if ext == "sdf"
+            || ext == "mol"
+            || raw.contains("V2000")
+            || raw.contains("V3000")
+            || raw.contains("M  V30")
+        {
             parse_sdf_dataset(&raw)?
         } else {
             parse_delimited_dataset(&raw)?

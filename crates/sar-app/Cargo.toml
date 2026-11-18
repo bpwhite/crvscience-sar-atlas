@@ -18,3 +18,5 @@ bytemuck.workspace = true
 rayon.workspace = true
 clap.workspace = true
 eframe.workspace = true
+png.workspace = true
+rfd.workspace = true

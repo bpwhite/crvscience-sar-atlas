@@ -1345,6 +1345,15 @@ pub fn run_rbfe_network_campaign(
 
     // 2. Gather congeneric series molecules from dataset + curated congeneric analogs + optional user SMILES
     let max_ligs = cfg.max_series_ligands.clamp(4, 18);
+    // Enrich with curated congeneric series analogs ONLY for explicit curated presets on >= 9-compound
+    // datasets (or empty datasets); never inject into AutoDominantTarget or custom < 9-compound runs.
+    let allow_curated_enrichment = cfg.series_preset != RbfeSeriesPreset::AutoDominantTarget
+        && (ds.mols.is_empty() || ds.mols.len() >= 9);
+    let dataset_cap = if allow_curated_enrichment {
+        max_ligs / 2
+    } else {
+        max_ligs
+    };
     let mut raw_entries: Vec<(Option<usize>, Molecule, Option<f64>, bool)> = Vec::new();
     let mut seen_smiles: BTreeSet<String> = BTreeSet::new();
 
@@ -1367,7 +1376,7 @@ pub fn run_rbfe_network_campaign(
             _ => "COX",
         };
         for (mi, m) in ds.mols.iter().enumerate() {
-            if raw_entries.len() >= max_ligs / 2 {
+            if raw_entries.len() >= dataset_cap {
                 break;
             }
             if m.target.to_ascii_uppercase().contains(key_tok) && seen_smiles.insert(m.smiles.clone()) {
@@ -1375,10 +1384,21 @@ pub fn run_rbfe_network_campaign(
                 raw_entries.push((Some(mi), m.clone(), exp_p, false));
             }
         }
+        // Preserve custom < 9-compound datasets even if their target label differs from the chosen pocket preset
+        if raw_entries.is_empty() && !ds.mols.is_empty() && ds.mols.len() < 9 {
+            for (mi, m) in ds.mols.iter().enumerate() {
+                if raw_entries.len() >= max_ligs {
+                    break;
+                }
+                if seen_smiles.insert(m.smiles.clone()) {
+                    let exp_p = if m.pact > 0.5 { Some(m.pact) } else { None };
+                    raw_entries.push((Some(mi), m.clone(), exp_p, false));
+                }
+            }
+        }
     }
 
-    // Enrich with curated congeneric series analogs so every preset has >= 8 tight MCS congeners
-    if raw_entries.len() < max_ligs.min(9) {
+    if allow_curated_enrichment && raw_entries.len() < max_ligs.min(9) {
         for (cid, cname, ctgt, csmi, cpact) in curated_congeneric_analogs(pocket_idx) {
             if raw_entries.len() >= max_ligs {
                 break;
@@ -1923,5 +1943,124 @@ mod tests {
             assert_eq!(e_csv.lines().count(), rep.edges.len() + 1);
             assert_eq!(n_csv.lines().count(), rep.nodes.len() + 1);
         }
+    }
+
+    #[test]
+    fn test_auto_dominant_target_does_not_inject_benchmark_analogs_into_small_series() {
+        use crate::parse_smiles;
+
+        // Build custom 4-compound and 6-compound quinazoline series (< 9 compounds)
+        let custom_specs = [
+            ("CUST-01", "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCC", 8.20),
+            ("CUST-02", "COc1cc2ncnc(Nc3cccc(Cl)c3)c2cc1OC", 7.80),
+            ("CUST-03", "COc1cc2ncnc(Nc3ccc(F)cc3)c2cc1OC", 7.45),
+            ("CUST-04", "COc1cc2ncnc(Nc3ccccc3)c2cc1OC", 6.95),
+            ("CUST-05", "COc1cc2ncnc(Nc3ccc(Br)cc3)c2cc1OC", 7.95),
+            ("CUST-06", "COc1cc2ncnc(Nc3ccc(C#N)cc3)c2cc1OC", 7.15),
+        ];
+
+        for n in [4usize, 6usize] {
+            let mut mols = Vec::new();
+            for (cid, smi, pact) in custom_specs.iter().take(n) {
+                let mut m = parse_smiles(smi).unwrap();
+                m.id = (*cid).to_string();
+                m.name = (*cid).to_string();
+                m.target = "CustomTarget".to_string();
+                m.pact = *pact;
+                mols.push(m);
+            }
+            let ds = DatasetAnalysis::from_molecules(mols, 0.30, 6.0);
+            let rep = run_rbfe_network_campaign(&ds, &RbfeNetworkConfig::default());
+            assert_eq!(
+                rep.nodes.len(),
+                n,
+                "AutoDominantTarget must preserve exact {n} custom compounds without analog injection"
+            );
+            assert!(
+                rep.nodes.iter().all(|nd| nd.compound_id.starts_with("CUST-")),
+                "Unexpected benchmark analog injected into {n}-compound custom RBFE run: {:?}",
+                rep.nodes.iter().map(|nd| &nd.compound_id).collect::<Vec<_>>()
+            );
+        }
+
+        // Also verify EGFR 8-compound subset from benchmark_26 stays at 8 nodes under AutoDominantTarget
+        let egfr_only: Vec<_> = load_benchmark_26()
+            .into_iter()
+            .filter(|m| m.target == "EGFR")
+            .collect();
+        assert_eq!(egfr_only.len(), 8);
+        let egfr_ds = DatasetAnalysis::from_molecules(egfr_only, 0.30, 6.0);
+        let egfr_rep = run_rbfe_network_campaign(&egfr_ds, &RbfeNetworkConfig::default());
+        assert_eq!(egfr_rep.nodes.len(), 8);
+        assert!(egfr_rep.nodes.iter().all(|nd| !nd.compound_id.starts_with("EGFR-Q")));
+
+        // Verify explicit curated preset on a custom < 9-compound dataset also does NOT inject benchmark analogs
+        let mut custom_egfr = Vec::new();
+        for (cid, smi, pact) in custom_specs.iter().take(4) {
+            let mut m = parse_smiles(smi).unwrap();
+            m.id = (*cid).to_string();
+            m.name = (*cid).to_string();
+            m.target = "EGFR".to_string();
+            m.pact = *pact;
+            custom_egfr.push(m);
+        }
+        let custom_egfr_ds = DatasetAnalysis::from_molecules(custom_egfr, 0.30, 6.0);
+        let explicit_cfg = RbfeNetworkConfig {
+            series_preset: RbfeSeriesPreset::Egfr1m17Quinazolines,
+            ..RbfeNetworkConfig::default()
+        };
+        let explicit_rep = run_rbfe_network_campaign(&custom_egfr_ds, &explicit_cfg);
+        assert_eq!(explicit_rep.nodes.len(), 4);
+        assert!(explicit_rep.nodes.iter().all(|nd| nd.compound_id.starts_with("CUST-")));
+    }
+
+    #[test]
+    fn test_explicit_series_preset_preserves_all_8_egfr_compounds_without_truncation() {
+        use crate::parse_smiles;
+        use std::collections::BTreeSet;
+
+        let egfr_only: Vec<_> = load_benchmark_26()
+            .into_iter()
+            .filter(|m| m.target == "EGFR")
+            .collect();
+        assert_eq!(egfr_only.len(), 8);
+        let expected_ids: BTreeSet<String> = egfr_only.iter().map(|m| m.id.clone()).collect();
+        let egfr_ds = DatasetAnalysis::from_molecules(egfr_only.clone(), 0.30, 6.0);
+        let explicit_cfg = RbfeNetworkConfig {
+            series_preset: RbfeSeriesPreset::Egfr1m17Quinazolines,
+            ..RbfeNetworkConfig::default()
+        };
+        let rep = run_rbfe_network_campaign(&egfr_ds, &explicit_cfg);
+        assert_eq!(
+            rep.nodes.len(),
+            8,
+            "Explicit Egfr1m17Quinazolines preset on an 8-compound (< 9) EGFR dataset must retain all 8 compounds without truncating to max_ligs/2"
+        );
+        let actual_ids: BTreeSet<String> = rep.nodes.iter().map(|nd| nd.compound_id.clone()).collect();
+        assert_eq!(actual_ids, expected_ids);
+        assert!(
+            rep.nodes.iter().all(|nd| !nd.compound_id.starts_with("EGFR-Q")),
+            "Zero curated EGFR-Q* analogs may be injected into an 8-compound (< 9) dataset: {:?}",
+            rep.nodes.iter().map(|nd| &nd.compound_id).collect::<Vec<_>>()
+        );
+
+        // Confirm >= 9-compound EGFR dataset with explicit preset still enriches to max_series_ligands (12)
+        let mut egfr_10 = egfr_only;
+        for (cid, smi, pact) in [
+            ("EGFR-EXTRA1", "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCC", 8.10),
+            ("EGFR-EXTRA2", "COc1cc2ncnc(Nc3cccc(Cl)c3)c2cc1OC", 7.65),
+        ] {
+            let mut m = parse_smiles(smi).unwrap();
+            m.id = cid.to_string();
+            m.name = cid.to_string();
+            m.target = "EGFR".to_string();
+            m.pact = pact;
+            egfr_10.push(m);
+        }
+        assert_eq!(egfr_10.len(), 10);
+        let egfr_10_ds = DatasetAnalysis::from_molecules(egfr_10, 0.30, 6.0);
+        let rep_10 = run_rbfe_network_campaign(&egfr_10_ds, &explicit_cfg);
+        assert_eq!(rep_10.nodes.len(), 12);
+        assert!(rep_10.nodes.iter().any(|nd| nd.compound_id.starts_with("EGFR-Q")));
     }
 }

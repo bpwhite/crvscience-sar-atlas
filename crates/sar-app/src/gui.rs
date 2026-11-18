@@ -120,7 +120,7 @@ use sar_core::{
     format_sdf_record, generate_bioisosteres, load_benchmark_26, load_project_auto, pack_gpu_scene,
     recombine_brics_leads, render_molecule_svg_with_smarts, rescore_and_sort_hybrids, save_project_auto,
     save_project_json, save_project_sqlite, scaffold_subgraph_to_smarts, screen_pharmacophore_library,
-    synthesize_hts_library, viridis_rgb, AdmetProfile, BioisostereAnalog, BoiledEggRegion,
+    synthesize_hts_library, inferno_cliff_rgb, viridis_rgb, AdmetProfile, BioisostereAnalog, BoiledEggRegion,
     BondOrder, ChemblQueryConfig, DatasetAnalysis, Element, FreeWilsonMatrix, FunctionalGroup,
     GpuCameraUniform, GpuEdgeInstance, GpuNodeInstance, AlignedSeriesMember, HeatmapLayer,
     HergRisk, IngestReport, LiveDesignReport, LoadedProjectSession, McsAtomMatchMode, McsConfig,
@@ -139,10 +139,68 @@ use sar_core::{
     CURATED_SMARTS_PRESETS,
 };
 use std::f32::consts::{PI, TAU};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::Instant;
+
+const APP_ICON_RGBA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon_64.rgba"));
+
+fn pick_open_file(title: &str, filter_name: &str, extensions: &[&str]) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(title)
+        .add_filter(filter_name, extensions)
+        .pick_file()
+}
+
+fn pick_save_file(
+    title: &str,
+    default_name: &str,
+    filter_name: &str,
+    extensions: &[&str],
+) -> Option<PathBuf> {
+    let mut dlg = rfd::FileDialog::new()
+        .set_title(title)
+        .add_filter(filter_name, extensions);
+    if !default_name.trim().is_empty() {
+        dlg = dlg.set_file_name(default_name.trim());
+    }
+    dlg.save_file()
+}
+
+fn open_path_row_button(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    title: &str,
+    filter_name: &str,
+    extensions: &[&str],
+) -> bool {
+    if ui.small_button("Browse...").on_hover_text(title).clicked() {
+        if let Some(p) = pick_open_file(title, filter_name, extensions) {
+            *buf = p.display().to_string();
+            return true;
+        }
+    }
+    false
+}
+
+fn save_path_row_button(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    title: &str,
+    filter_name: &str,
+    extensions: &[&str],
+) {
+    if ui.small_button("...").on_hover_text(title).clicked() {
+        let def_name = Path::new(buf.trim())
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("export");
+        if let Some(p) = pick_save_file(title, def_name, filter_name, extensions) {
+            *buf = p.display().to_string();
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum WorkbenchDomain {
@@ -539,6 +597,11 @@ pub fn run_gui(ds: DatasetAnalysis, vsync: bool) -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1620.0, 960.0])
             .with_min_inner_size([1140.0, 700.0])
+            .with_icon(Arc::new(egui::IconData {
+                rgba: APP_ICON_RGBA.to_vec(),
+                width: 64,
+                height: 64,
+            }))
             .with_title(
                 "SAR-Atlas v3.8.0 — 5-Domain Small-Molecule, FBDD, Macrocycle, PROTAC, SMARTCyp, Prodrug & Oral PBPK Workbench",
             ),
@@ -810,6 +873,9 @@ pub struct SarAtlasGuiApp {
     pbpk_inhibit_bbb_efflux: bool,
     pbpk_log_scale_y: bool,
     pbpk_show_total_plasma: bool,
+    pbpk_show_ci90_band: bool,
+    pbpk_km_override_enabled: bool,
+    pbpk_km_um: f32,
     pbpk_cached_key: String,
     pbpk_report: Option<OralPbpkReport>,
     pbpk_dataset_cached_key: String,
@@ -1104,6 +1170,7 @@ pub struct SarAtlasGuiApp {
     // Viewport camera & GPU buffers
     pan: [f32; 2],
     zoom: f32,
+    camera_autofit_pending: bool,
     heatmap_layer: HeatmapLayer,
     heatmap_alpha: f32,
     color_mode: NodeColorMode,
@@ -1121,6 +1188,7 @@ pub struct SarAtlasGuiApp {
     // File import/export UI state
     io_path_buf: String,
     status_banner: String,
+    about_open: bool,
     start_instant: Instant,
     smoothed_fps: f32,
 }
@@ -1375,6 +1443,9 @@ impl SarAtlasGuiApp {
             pbpk_inhibit_bbb_efflux: false,
             pbpk_log_scale_y: true,
             pbpk_show_total_plasma: true,
+            pbpk_show_ci90_band: true,
+            pbpk_km_override_enabled: false,
+            pbpk_km_um: 5.0,
             pbpk_cached_key: String::new(),
             pbpk_report: None,
             pbpk_dataset_cached_key: String::new(),
@@ -1640,6 +1711,7 @@ impl SarAtlasGuiApp {
             esp_export_pdb_buf: "esp_xed_multipoles_v380.pdb".to_string(),
             pan: [0.0, 0.0],
             zoom: 0.95,
+            camera_autofit_pending: true,
             heatmap_layer: HeatmapLayer::PotencySurface,
             heatmap_alpha: 0.62,
             color_mode: NodeColorMode::PotencyViridis,
@@ -1654,6 +1726,7 @@ impl SarAtlasGuiApp {
             heatmap_dirty: true,
             io_path_buf: "data/benchmark_26.sdf".to_string(),
             status_banner: format!("Loaded {} sanitized small molecules.", n),
+            about_open: false,
             start_instant: Instant::now(),
             smoothed_fps: 60.0,
         };
@@ -1704,8 +1777,7 @@ impl SarAtlasGuiApp {
         self.selected_mol = 0;
         self.compare_pair = None;
         self.scaffold_filter = None;
-        self.pan = [0.0, 0.0];
-        self.zoom = 0.95;
+        self.camera_autofit_pending = true;
 
         if !self.fw_core_smarts.trim().is_empty() {
             self.solve_active_fw_matrix();
@@ -2008,6 +2080,8 @@ impl SarAtlasGuiApp {
                     regimen: self.pbpk_regimen,
                     prandial: self.pbpk_prandial,
                     inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+                    cyp3a4_km_um: self.pbpk_km_override_enabled.then_some(self.pbpk_km_um as f64),
+                    ..PbpkDosingConfig::default()
                 },
             ));
         }
@@ -2022,8 +2096,7 @@ impl SarAtlasGuiApp {
     fn switch_campaign(&mut self, target_filter: &str) {
         self.target_filter = target_filter.to_string();
         self.scaffold_filter = None;
-        self.pan = [0.0, 0.0];
-        self.zoom = 0.95;
+        self.camera_autofit_pending = true;
         self.campaign_ds_cache_key.clear();
         self.campaign_ds_cache = None;
         self.sync_studios_to_active_campaign();
@@ -2308,6 +2381,8 @@ impl SarAtlasGuiApp {
                     regimen: self.pbpk_regimen,
                     prandial: self.pbpk_prandial,
                     inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+                    cyp3a4_km_um: self.pbpk_km_override_enabled.then_some(self.pbpk_km_um as f64),
+                    ..PbpkDosingConfig::default()
                 },
             ));
             self.bio_source_label = format!("{} ({})", m.name, m.target);
@@ -2415,8 +2490,7 @@ impl SarAtlasGuiApp {
         } else {
             "All".to_string()
         };
-        self.pan = [0.0, 0.0];
-        self.zoom = 0.95;
+        self.camera_autofit_pending = true;
         self.sketch_cached_rev = 0;
         self.recompute_smarts();
         self.conf3d_cached_key.clear();
@@ -2425,6 +2499,45 @@ impl SarAtlasGuiApp {
         self.denovo_promoted_seed = None;
         self.sync_studios_to_active_campaign();
         self.status_banner = label.into();
+    }
+
+    fn fit_camera_to_visible(&mut self, aspect: f32) {
+        let mut min_x = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        let mut count = 0usize;
+
+        for (i, c) in self.ds.chem_coords.iter().enumerate() {
+            if self.visible_mask.get(i).copied().unwrap_or(true) {
+                min_x = min_x.min(c[0]);
+                max_x = max_x.max(c[0]);
+                min_y = min_y.min(c[1]);
+                max_y = max_y.max(c[1]);
+                count += 1;
+            }
+        }
+        if count == 0 {
+            for c in &self.ds.chem_coords {
+                min_x = min_x.min(c[0]);
+                max_x = max_x.max(c[0]);
+                min_y = min_y.min(c[1]);
+                max_y = max_y.max(c[1]);
+                count += 1;
+            }
+        }
+        if count == 0 || !min_x.is_finite() || !max_x.is_finite() {
+            self.pan = [0.0, 0.0];
+            self.zoom = 0.95;
+            return;
+        }
+        self.pan = [(min_x + max_x) * 0.5, (min_y + max_y) * 0.5];
+        let half_w = ((max_x - min_x) * 0.5).max(8.0) + 14.0;
+        let half_h = ((max_y - min_y) * 0.5).max(8.0) + 14.0;
+        let safe_aspect = aspect.max(0.2);
+        self.zoom = ((0.86 * safe_aspect * 100.0) / half_w)
+            .min((0.86 * 100.0) / half_h)
+            .clamp(0.25, 6.0);
     }
 
     fn solve_active_fw_matrix(&mut self) {
@@ -2688,6 +2801,28 @@ impl SarAtlasGuiApp {
             self.render_command_palette_modal(ctx);
         }
 
+        if self.about_open {
+            egui::Window::new("About SAR-Atlas")
+                .open(&mut self.about_open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.set_min_width(360.0);
+                    ui.heading(format!("SAR-Atlas v{}", env!("CARGO_PKG_VERSION")));
+                    ui.label("5-Domain Small-Molecule Cheminformatics, RBFE, CYP & Oral PBPK Workbench");
+                    ui.separator();
+                    ui.strong("Copyright CRV Science Network");
+                    ui.label("License: GNU General Public License v3.0 or later (GPL-3.0-or-later)");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.hyperlink_to("https://crvscience.com", "https://crvscience.com");
+                        ui.separator();
+                        ui.hyperlink_to("https://crvscience.com/apps", "https://crvscience.com/apps");
+                    });
+                });
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| match self.active_tab {
             WorkbenchTab::SaliViewport => self.render_sali_viewport_tab(ui, ctx),
             WorkbenchTab::StructureGrid => self.render_structure_grid_tab(ui),
@@ -2949,6 +3084,30 @@ impl SarAtlasGuiApp {
                             .font(egui::TextStyle::Monospace)
                             .desired_width(240.0),
                     );
+                    if open_path_row_button(
+                        ui,
+                        &mut self.project_path_buf,
+                        "Select Existing Workspace (.sqlite / .saratlas.json)",
+                        "SAR-Atlas Workspace",
+                        &["sqlite", "sqlite3", "db", "json"],
+                    ) {
+                        trigger_load_auto = true;
+                    }
+                    if ui.small_button("Save As...").clicked() {
+                        let def_name = Path::new(self.project_path_buf.trim())
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("sar_campaign.sqlite");
+                        if let Some(p) = pick_save_file(
+                            "Save Workspace (.sqlite or .saratlas.json)",
+                            def_name,
+                            "SAR-Atlas Workspace",
+                            &["sqlite", "json"],
+                        ) {
+                            self.project_path_buf = p.display().to_string();
+                            trigger_save_auto = true;
+                        }
+                    }
                     if ui
                         .button(
                             RichText::new("Save Workspace")
@@ -3529,6 +3688,8 @@ impl SarAtlasGuiApp {
                                 regimen: self.pbpk_regimen,
                                 prandial: self.pbpk_prandial,
                                 inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+                                cyp3a4_km_um: self.pbpk_km_override_enabled.then_some(self.pbpk_km_um as f64),
+                                virtual_pop_n: 0,
                             },
                         );
                         let [pbr, pbg, pbb] = pbpk_fast.cns_class.rgb();
@@ -3903,39 +4064,41 @@ impl SarAtlasGuiApp {
             {
                 commit_requested = true;
             }
-            if ui.button("Export .mol").clicked() && !self.sketcher.mol.atoms.is_empty() {
-                let out = "sketched_analog.mol";
-                let sdf = format_sdf_record(&self.sketcher.mol);
-                match std::fs::write(out, sdf) {
-                    Ok(_) => self.status_banner = format!("Exported V2000 molfile -> {out}"),
-                    Err(e) => self.status_banner = format!("Write error: {e}"),
+            if ui.button("Export .mol...").clicked() && !self.sketcher.mol.atoms.is_empty() {
+                if let Some(out) = pick_save_file("Export Sketched Analog (.mol)", "sketched_analog.mol", "MDL Molfile", &["mol", "sdf"]) {
+                    let sdf = format_sdf_record(&self.sketcher.mol);
+                    match std::fs::write(&out, sdf) {
+                        Ok(_) => self.status_banner = format!("Exported V2000 molfile -> {}", out.display()),
+                        Err(e) => self.status_banner = format!("Write error: {e}"),
+                    }
                 }
             }
-            if ui.button("Export .svg").clicked() && !self.sketcher.mol.atoms.is_empty() {
-                let out = "sketched_analog.svg";
-                let alert_hl = self
-                    .sketch_report
-                    .as_ref()
-                    .map(|r| r.alert_atoms.as_slice())
-                    .unwrap_or(&[]);
-                let core_hl = self
-                    .sketch_report
-                    .as_ref()
-                    .and_then(|r| r.free_wilson.as_ref())
-                    .map(|fw| fw.core_atoms.as_slice())
-                    .unwrap_or(&[]);
-                let svg = render_molecule_svg_with_smarts(
-                    &self.sketcher.mol,
-                    560,
-                    400,
-                    true,
-                    alert_hl,
-                    core_hl,
-                    &[],
-                );
-                match std::fs::write(out, svg) {
-                    Ok(_) => self.status_banner = format!("Exported 2D vector SVG -> {out}"),
-                    Err(e) => self.status_banner = format!("Write error: {e}"),
+            if ui.button("Export .svg...").clicked() && !self.sketcher.mol.atoms.is_empty() {
+                if let Some(out) = pick_save_file("Export Sketched Analog (.svg)", "sketched_analog.svg", "SVG Image", &["svg"]) {
+                    let alert_hl = self
+                        .sketch_report
+                        .as_ref()
+                        .map(|r| r.alert_atoms.as_slice())
+                        .unwrap_or(&[]);
+                    let core_hl = self
+                        .sketch_report
+                        .as_ref()
+                        .and_then(|r| r.free_wilson.as_ref())
+                        .map(|fw| fw.core_atoms.as_slice())
+                        .unwrap_or(&[]);
+                    let svg = render_molecule_svg_with_smarts(
+                        &self.sketcher.mol,
+                        560,
+                        400,
+                        true,
+                        alert_hl,
+                        core_hl,
+                        &[],
+                    );
+                    match std::fs::write(&out, svg) {
+                        Ok(_) => self.status_banner = format!("Exported 2D vector SVG -> {}", out.display()),
+                        Err(e) => self.status_banner = format!("Write error: {e}"),
+                    }
                 }
             }
         });
@@ -5091,15 +5254,21 @@ impl SarAtlasGuiApp {
         ui.horizontal_wrapped(|ui| {
             ui.heading("Free & Wilson (1964) Core-Aligned R1/R2/R3 SAR Matrix Solver");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Export SAR Matrix CSV").clicked() {
+                if ui.button("Export SAR Matrix CSV...").clicked() {
                     if let Some(mat) = &self.fw_matrix {
-                        let out = "sar_free_wilson_matrix.csv";
-                        match std::fs::write(out, mat.export_csv()) {
-                            Ok(_) => {
-                                self.status_banner =
-                                    format!("Exported Free-Wilson matrix -> {out}")
+                        if let Some(out) = pick_save_file(
+                            "Export Free-Wilson SAR Matrix (.csv)",
+                            "sar_free_wilson_matrix.csv",
+                            "CSV Table",
+                            &["csv"],
+                        ) {
+                            match std::fs::write(&out, mat.export_csv()) {
+                                Ok(_) => {
+                                    self.status_banner =
+                                        format!("Exported Free-Wilson matrix -> {}", out.display())
+                                }
+                                Err(e) => self.status_banner = format!("Write error: {e}"),
                             }
-                            Err(e) => self.status_banner = format!("Write error: {e}"),
                         }
                     }
                 }
@@ -5553,8 +5722,7 @@ impl SarAtlasGuiApp {
             ui.label("Field Opacity:");
             ui.add(egui::Slider::new(&mut self.heatmap_alpha, 0.0..=1.0).fixed_decimals(2));
             if ui.button("Reset Camera").clicked() {
-                self.pan = [0.0, 0.0];
-                self.zoom = 0.95;
+                self.camera_autofit_pending = true;
             }
         });
 
@@ -5568,6 +5736,10 @@ impl SarAtlasGuiApp {
             ui.allocate_exact_size(Vec2::new(avail.x, canvas_h), Sense::click_and_drag());
 
         let aspect = (rect.width() / rect.height().max(1.0)).max(0.2);
+        if self.camera_autofit_pending {
+            self.fit_camera_to_visible(aspect);
+            self.camera_autofit_pending = false;
+        }
 
         if response.dragged() {
             let d = response.drag_delta();
@@ -5653,6 +5825,12 @@ impl SarAtlasGuiApp {
             ui.painter()
                 .rect_filled(rect, 6.0, Color32::from_rgb(12, 18, 30));
         }
+
+        paint_sali_heatmap_colorbar(
+            ui.painter(),
+            rect.intersect(ui.clip_rect()),
+            self.heatmap_layer,
+        );
 
         ui.add_space(6.0);
         ui.label(RichText::new("Top Intra-Target Guha-Van Drie SALI Activity Cliffs").strong());
@@ -6256,7 +6434,14 @@ impl SarAtlasGuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.pharm_export_csv_buf)
                     .font(egui::TextStyle::Monospace)
-                    .desired_width(155.0),
+                    .desired_width(140.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.pharm_export_csv_buf,
+                "Choose Pharmacophore Hits CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Save Hits CSV").clicked() {
                 let p = self.pharm_export_csv_buf.trim().to_string();
@@ -6716,7 +6901,14 @@ impl SarAtlasGuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.synth_export_csv_buf)
                     .font(egui::TextStyle::Monospace)
-                    .desired_width(165.0),
+                    .desired_width(150.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.synth_export_csv_buf,
+                "Choose SAScore CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Save SAScore CSV").clicked() {
                 let p = self.synth_export_csv_buf.trim().to_string();
@@ -7363,7 +7555,14 @@ impl SarAtlasGuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.brics_export_path_buf)
                     .font(egui::TextStyle::Monospace)
-                    .desired_width(165.0),
+                    .desired_width(150.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.brics_export_path_buf,
+                "Choose BRICS Hybrids CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Save CSV").clicked() {
                 let p = self.brics_export_path_buf.trim().to_string();
@@ -7377,15 +7576,24 @@ impl SarAtlasGuiApp {
                     Err(e) => self.status_banner = format!("CSV write error: {e}"),
                 }
             }
-            if ui.small_button("Save .sdf").clicked() {
-                let sdf_p = "brics_virtual_hybrids.sdf";
-                let mols: Vec<_> = self.brics_hybrids.iter().map(|h| h.mol.clone()).collect();
-                match std::fs::write(sdf_p, format_sdf_dataset(&mols)) {
-                    Ok(()) => {
-                        self.status_banner =
-                            format!("Exported {} V2000 hybrid structures to {sdf_p}", mols.len());
+            if ui.small_button("Save .sdf...").clicked() {
+                if let Some(sdf_p) = pick_save_file(
+                    "Export Virtual BRICS Hybrids (.sdf)",
+                    "brics_virtual_hybrids.sdf",
+                    "MDL SDF",
+                    &["sdf"],
+                ) {
+                    let mols: Vec<_> = self.brics_hybrids.iter().map(|h| h.mol.clone()).collect();
+                    match std::fs::write(&sdf_p, format_sdf_dataset(&mols)) {
+                        Ok(()) => {
+                            self.status_banner = format!(
+                                "Exported {} V2000 hybrid structures to {}",
+                                mols.len(),
+                                sdf_p.display()
+                            );
+                        }
+                        Err(e) => self.status_banner = format!("SDF write error: {e}"),
                     }
-                    Err(e) => self.status_banner = format!("SDF write error: {e}"),
                 }
             }
         });
@@ -7969,7 +8177,14 @@ impl SarAtlasGuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.mcs_export_csv_buf)
                     .font(egui::TextStyle::Monospace)
-                    .desired_width(165.0),
+                    .desired_width(150.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.mcs_export_csv_buf,
+                "Choose R-Group MCS CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Save R-Group CSV").clicked() {
                 let p = self.mcs_export_csv_buf.trim().to_string();
@@ -7983,18 +8198,25 @@ impl SarAtlasGuiApp {
                     Err(e) => self.status_banner = format!("CSV write error: {e}"),
                 }
             }
-            if ui.small_button("Save Aligned 2D .sdf").clicked() {
-                let sdf_p = "mcs_aligned_series_2d.sdf";
-                let aligned_mols: Vec<_> =
-                    series.members.iter().map(|m| m.aligned_mol.clone()).collect();
-                match std::fs::write(sdf_p, format_sdf_dataset(&aligned_mols)) {
-                    Ok(()) => {
-                        self.status_banner = format!(
-                            "Exported {} Procrustes-aligned V2000 2D records to {sdf_p}",
-                            aligned_mols.len()
-                        );
+            if ui.small_button("Save Aligned 2D .sdf...").clicked() {
+                if let Some(sdf_p) = pick_save_file(
+                    "Export Procrustes-Aligned 2D Series (.sdf)",
+                    "mcs_aligned_series_2d.sdf",
+                    "MDL SDF",
+                    &["sdf"],
+                ) {
+                    let aligned_mols: Vec<_> =
+                        series.members.iter().map(|m| m.aligned_mol.clone()).collect();
+                    match std::fs::write(&sdf_p, format_sdf_dataset(&aligned_mols)) {
+                        Ok(()) => {
+                            self.status_banner = format!(
+                                "Exported {} Procrustes-aligned V2000 2D records to {}",
+                                aligned_mols.len(),
+                                sdf_p.display()
+                            );
+                        }
+                        Err(e) => self.status_banner = format!("SDF write error: {e}"),
                     }
-                    Err(e) => self.status_banner = format!("SDF write error: {e}"),
                 }
             }
         });
@@ -8225,8 +8447,14 @@ impl SarAtlasGuiApp {
         if let Some((core_nm, core_sm)) = handoff_to_fw {
             self.fw_core_name = core_nm;
             self.fw_core_smarts = core_sm;
-            if self.mcs_scope_target != "Visible Filtered" && self.mcs_scope_target != "All" {
+            if self.mcs_scope_target != "Visible Filtered"
+                && self.mcs_scope_target != "All"
+                && self.target_filter != self.mcs_scope_target
+            {
                 self.target_filter = self.mcs_scope_target.clone();
+                self.scene_dirty = true;
+                self.heatmap_dirty = true;
+                self.camera_autofit_pending = true;
             }
             self.solve_active_fw_matrix();
             self.active_tab = WorkbenchTab::SarMatrix;
@@ -8436,7 +8664,14 @@ impl SarAtlasGuiApp {
         // Export Bar
         ui.horizontal_wrapped(|ui| {
             ui.label("pH 7.4 CSV:");
-            ui.add(egui::TextEdit::singleline(&mut self.pka_export_csv_buf).desired_width(155.0));
+            ui.add(egui::TextEdit::singleline(&mut self.pka_export_csv_buf).desired_width(140.0));
+            save_path_row_button(
+                ui,
+                &mut self.pka_export_csv_buf,
+                "Choose Micro-pKa CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Dataset CSV").clicked() {
                 let out = self.pka_export_csv_buf.trim().to_string();
                 if !out.is_empty() {
@@ -8452,7 +8687,14 @@ impl SarAtlasGuiApp {
             }
             ui.separator();
             ui.label("Protomers V2000 SDF:");
-            ui.add(egui::TextEdit::singleline(&mut self.pka_export_sdf_buf).desired_width(155.0));
+            ui.add(egui::TextEdit::singleline(&mut self.pka_export_sdf_buf).desired_width(140.0));
+            save_path_row_button(
+                ui,
+                &mut self.pka_export_sdf_buf,
+                "Choose Protomers SDF Path",
+                "MDL SDF",
+                &["sdf"],
+            );
             if ui.small_button("Export Protomers SDF").clicked() {
                 let out = self.pka_export_sdf_buf.trim().to_string();
                 if !out.is_empty() {
@@ -9550,7 +9792,14 @@ impl SarAtlasGuiApp {
             ui.separator();
             ui.label("3D Hits CSV:");
             ui.add(
-                egui::TextEdit::singleline(&mut self.conf3d_export_csv_buf).desired_width(135.0),
+                egui::TextEdit::singleline(&mut self.conf3d_export_csv_buf).desired_width(125.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.conf3d_export_csv_buf,
+                "Choose 3D Hits CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Export CSV").clicked() {
                 let out = self.conf3d_export_csv_buf.trim().to_string();
@@ -9568,7 +9817,14 @@ impl SarAtlasGuiApp {
             ui.separator();
             ui.label("3D Pose V2000 SDF:");
             ui.add(
-                egui::TextEdit::singleline(&mut self.conf3d_export_sdf_buf).desired_width(145.0),
+                egui::TextEdit::singleline(&mut self.conf3d_export_sdf_buf).desired_width(130.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.conf3d_export_sdf_buf,
+                "Choose 3D Pose SDF Path",
+                "MDL SDF",
+                &["sdf"],
             );
             if ui.small_button("Export Overlaid 3D SDF").clicked() {
                 let out = self.conf3d_export_sdf_buf.trim().to_string();
@@ -10550,7 +10806,14 @@ impl SarAtlasGuiApp {
         // Export Bar
         ui.horizontal_wrapped(|ui| {
             ui.label("Swapped Panel CSV:");
-            ui.add(egui::TextEdit::singleline(&mut self.cov_export_csv_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.cov_export_csv_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.cov_export_csv_buf,
+                "Choose Warhead Swaps CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Swaps CSV").clicked() {
                 let out = self.cov_export_csv_buf.trim().to_string();
                 if !out.is_empty() {
@@ -10563,19 +10826,33 @@ impl SarAtlasGuiApp {
                     }
                 }
             }
-            if ui.small_button("Export Dataset Covalent CSV").clicked() {
-                let out = "dataset_covalent_summary.csv";
-                match std::fs::write(out, self.ds.export_covalent_summary_csv()) {
-                    Ok(()) => {
-                        self.status_banner = format!("Exported dataset covalent summary -> {out}");
+            if ui.small_button("Export Dataset Covalent CSV...").clicked() {
+                if let Some(out) = pick_save_file(
+                    "Export Dataset Covalent Summary (.csv)",
+                    "dataset_covalent_summary.csv",
+                    "CSV Table",
+                    &["csv"],
+                ) {
+                    match std::fs::write(&out, self.ds.export_covalent_summary_csv()) {
+                        Ok(()) => {
+                            self.status_banner =
+                                format!("Exported dataset covalent summary -> {}", out.display());
+                        }
+                        Err(e) => self.status_banner = format!("CSV write error: {e}"),
                     }
-                    Err(e) => self.status_banner = format!("CSV write error: {e}"),
                 }
             }
 
             ui.separator();
             ui.label("Swapped Series V2000 SDF:");
-            ui.add(egui::TextEdit::singleline(&mut self.cov_export_sdf_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.cov_export_sdf_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.cov_export_sdf_buf,
+                "Choose Warhead Swaps SDF Path",
+                "MDL SDF",
+                &["sdf"],
+            );
             if ui.small_button("Export Swaps SDF").clicked() {
                 let out = self.cov_export_sdf_buf.trim().to_string();
                 if !out.is_empty() {
@@ -11420,7 +11697,14 @@ impl SarAtlasGuiApp {
             ui.separator();
             ui.label("CSV:");
             ui.add(
-                egui::TextEdit::singleline(&mut self.protac_export_csv_buf).desired_width(155.0),
+                egui::TextEdit::singleline(&mut self.protac_export_csv_buf).desired_width(140.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.protac_export_csv_buf,
+                "Choose PROTAC CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Export PROTAC CSV").clicked() {
                 let out = self.protac_export_csv_buf.trim().to_string();
@@ -11440,7 +11724,14 @@ impl SarAtlasGuiApp {
             ui.separator();
             ui.label("V2000 SDF:");
             ui.add(
-                egui::TextEdit::singleline(&mut self.protac_export_sdf_buf).desired_width(145.0),
+                egui::TextEdit::singleline(&mut self.protac_export_sdf_buf).desired_width(135.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.protac_export_sdf_buf,
+                "Choose PROTAC SDF Path",
+                "MDL SDF",
+                &["sdf"],
             );
             if ui.small_button("Export PROTAC SDF").clicked() {
                 let out = self.protac_export_sdf_buf.trim().to_string();
@@ -12307,7 +12598,14 @@ impl SarAtlasGuiApp {
         // Export Bar
         ui.horizontal_wrapped(|ui| {
             ui.label("Metabolites CSV:");
-            ui.add(egui::TextEdit::singleline(&mut self.cyp_export_csv_buf).desired_width(175.0));
+            ui.add(egui::TextEdit::singleline(&mut self.cyp_export_csv_buf).desired_width(155.0));
+            save_path_row_button(
+                ui,
+                &mut self.cyp_export_csv_buf,
+                "Choose Metabolites CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Metabolites CSV").clicked() {
                 let out = self.cyp_export_csv_buf.trim().to_string();
                 if !out.is_empty() {
@@ -12322,20 +12620,33 @@ impl SarAtlasGuiApp {
                     }
                 }
             }
-            if ui.small_button("Export Dataset CLint CSV").clicked() {
-                let out = "dataset_smartcyp_clearance.csv";
-                match std::fs::write(out, self.ds.export_metabolism_summary_csv()) {
-                    Ok(()) => {
-                        self.status_banner =
-                            format!("Exported dataset SMARTCyp summary -> {out}");
+            if ui.small_button("Export Dataset CLint CSV...").clicked() {
+                if let Some(out) = pick_save_file(
+                    "Export Dataset SMARTCyp Clearance (.csv)",
+                    "dataset_smartcyp_clearance.csv",
+                    "CSV Table",
+                    &["csv"],
+                ) {
+                    match std::fs::write(&out, self.ds.export_metabolism_summary_csv()) {
+                        Ok(()) => {
+                            self.status_banner =
+                                format!("Exported dataset SMARTCyp summary -> {}", out.display());
+                        }
+                        Err(e) => self.status_banner = format!("CSV write error: {e}"),
                     }
-                    Err(e) => self.status_banner = format!("CSV write error: {e}"),
                 }
             }
 
             ui.separator();
             ui.label("Metabolites V2000 SDF:");
-            ui.add(egui::TextEdit::singleline(&mut self.cyp_export_sdf_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.cyp_export_sdf_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.cyp_export_sdf_buf,
+                "Choose Metabolites SDF Path",
+                "MDL SDF",
+                &["sdf"],
+            );
             if ui.small_button("Export Metabolites SDF").clicked() {
                 let out = self.cyp_export_sdf_buf.trim().to_string();
                 if !out.is_empty() {
@@ -12514,86 +12825,107 @@ impl SarAtlasGuiApp {
                     });
                     ui.add_space(4.0);
 
-                    ui.horizontal_wrapped(|ui| {
-                        for met in filtered_mets.iter().take(6) {
-                            let [pr, pg, pb] = if met.is_reactive_bioactivation {
-                                [248, 113, 113]
-                            } else {
-                                met.phase.rgb()
-                            };
-                            egui::Frame::canvas(ui.style())
-                                .inner_margin(egui::Margin::same(6))
-                                .stroke(Stroke::new(
-                                    if met.is_reactive_bioactivation || met.rank == 1 {
-                                        1.7
-                                    } else {
-                                        1.0
-                                    },
-                                    Color32::from_rgb(pr, pg, pb),
-                                ))
-                                .show(ui, |ui| {
-                                    ui.set_width(236.0);
-                                    ui.colored_label(
-                                        Color32::from_rgb(pr, pg, pb),
-                                        RichText::new(format!(
-                                            "{} [{}] {:+.2} Da ({:.0}%)",
-                                            met.metabolite_id,
-                                            met.enzyme,
-                                            met.mass_shift_da,
-                                            met.predicted_abundance_pct
-                                        ))
-                                        .strong(),
-                                    );
-                                    ui.small(&met.reaction_name);
-                                    let card_r = ui
-                                        .allocate_exact_size(
-                                            Vec2::new(224.0, 128.0),
-                                            Sense::hover(),
-                                        )
-                                        .0;
-                                    let empty_b: [usize; 0] = [];
-                                    let (alert_a, cyan_a): (&[usize], &[usize]) =
-                                        if met.is_reactive_bioactivation {
-                                            (&met.modified_atoms, &[])
+                    let card_w = 236.0_f32;
+                    let cols = ((ui.available_width() / (card_w + 12.0)).floor() as usize).clamp(1, 3);
+                    egui::Grid::new("cyp_metabolite_cards_grid")
+                        .spacing([10.0, 10.0])
+                        .show(ui, |ui| {
+                            for (ci, met) in filtered_mets.iter().take(6).enumerate() {
+                                let [pr, pg, pb] = if met.is_reactive_bioactivation {
+                                    [248, 113, 113]
+                                } else {
+                                    met.phase.rgb()
+                                };
+                                egui::Frame::canvas(ui.style())
+                                    .inner_margin(egui::Margin::same(6))
+                                    .stroke(Stroke::new(
+                                        if met.is_reactive_bioactivation || met.rank == 1 {
+                                            1.7
                                         } else {
-                                            (&[], &met.modified_atoms)
-                                        };
-                                    paint_molecule_2d(
-                                        ui.painter(),
-                                        card_r,
-                                        &met.mol,
-                                        alert_a,
-                                        cyan_a,
-                                        &empty_b,
-                                        met.is_reactive_bioactivation,
-                                    );
-                                    ui.horizontal(|ui| {
-                                        if ui.small_button("Load in 2D Sketcher").clicked() {
-                                            load_smiles_req = Some((
-                                                met.canonical_smiles.clone(),
-                                                format!(
-                                                    "{} {} ({})",
-                                                    target_mol.name,
-                                                    met.metabolite_id,
-                                                    met.reaction_name
-                                                ),
-                                            ));
-                                        }
-                                        if ui
-                                            .small_button("Copy SMILES")
-                                            .on_hover_text(met.bioactivation_note)
-                                            .clicked()
-                                        {
-                                            ui.ctx().copy_text(met.canonical_smiles.clone());
-                                            self.status_banner = format!(
-                                                "Copied {} SMILES to clipboard.",
-                                                met.metabolite_id
+                                            1.0
+                                        },
+                                        Color32::from_rgb(pr, pg, pb),
+                                    ))
+                                    .show(ui, |ui| {
+                                        ui.vertical(|ui| {
+                                            ui.set_width(card_w);
+                                            ui.set_min_height(198.0);
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(format!(
+                                                        "{} [{}] {:+.2} Da ({:.0}%)",
+                                                        met.metabolite_id,
+                                                        met.enzyme,
+                                                        met.mass_shift_da,
+                                                        met.predicted_abundance_pct
+                                                    ))
+                                                    .strong()
+                                                    .color(Color32::from_rgb(pr, pg, pb)),
+                                                )
+                                                .truncate(),
                                             );
-                                        }
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(&met.reaction_name).small(),
+                                                )
+                                                .truncate(),
+                                            )
+                                            .on_hover_text(&met.reaction_name);
+                                            let card_r = ui
+                                                .allocate_exact_size(
+                                                    Vec2::new(card_w - 12.0, 128.0),
+                                                    Sense::hover(),
+                                                )
+                                                .0;
+                                            let empty_b: [usize; 0] = [];
+                                            let (alert_a, cyan_a): (&[usize], &[usize]) =
+                                                if met.is_reactive_bioactivation {
+                                                    (&met.modified_atoms, &[])
+                                                } else {
+                                                    (&[], &met.modified_atoms)
+                                                };
+                                            paint_molecule_2d(
+                                                ui.painter(),
+                                                card_r,
+                                                &met.mol,
+                                                alert_a,
+                                                cyan_a,
+                                                &empty_b,
+                                                met.is_reactive_bioactivation,
+                                            );
+                                            ui.horizontal(|ui| {
+                                                if ui.small_button("Load in 2D Sketcher").clicked()
+                                                {
+                                                    load_smiles_req = Some((
+                                                        met.canonical_smiles.clone(),
+                                                        format!(
+                                                            "{} {} ({})",
+                                                            target_mol.name,
+                                                            met.metabolite_id,
+                                                            met.reaction_name
+                                                        ),
+                                                    ));
+                                                }
+                                                if ui
+                                                    .small_button("Copy SMILES")
+                                                    .on_hover_text(met.bioactivation_note)
+                                                    .clicked()
+                                                {
+                                                    ui.ctx()
+                                                        .copy_text(met.canonical_smiles.clone());
+                                                    self.status_banner = format!(
+                                                        "Copied {} SMILES to clipboard.",
+                                                        met.metabolite_id
+                                                    );
+                                                }
+                                            });
+                                        });
                                     });
-                                });
-                        }
-                    });
+                                if (ci + 1) % cols == 0 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
 
                     if !filtered_mets.is_empty() {
                         ui.add_space(4.0);
@@ -13122,7 +13454,14 @@ impl SarAtlasGuiApp {
                 }
             }
             ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.macro_export_csv_buf).desired_width(185.0));
+            ui.add(egui::TextEdit::singleline(&mut self.macro_export_csv_buf).desired_width(165.0));
+            save_path_row_button(
+                ui,
+                &mut self.macro_export_csv_buf,
+                "Choose Macrocycle CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Macrocycle CSV").clicked() && !rep.candidates.is_empty() {
                 let out = self.macro_export_csv_buf.trim().to_string();
                 let csv = export_macrocycles_csv(&rep.candidates);
@@ -13136,7 +13475,14 @@ impl SarAtlasGuiApp {
                     Err(e) => self.status_banner = format!("CSV export error: {e}"),
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.macro_export_sdf_buf).desired_width(175.0));
+            ui.add(egui::TextEdit::singleline(&mut self.macro_export_sdf_buf).desired_width(155.0));
+            save_path_row_button(
+                ui,
+                &mut self.macro_export_sdf_buf,
+                "Choose Macrocycle 3D SDF Path",
+                "MDL SDF",
+                &["sdf"],
+            );
             if ui.small_button("Export 3D SDF").clicked() && !rep.candidates.is_empty() {
                 let out = self.macro_export_sdf_buf.trim().to_string();
                 let sdf = format_macrocycles_3d_sdf(&rep.candidates);
@@ -14148,7 +14494,14 @@ impl SarAtlasGuiApp {
                 }
             }
             ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.frag_export_csv_buf).desired_width(175.0));
+            ui.add(egui::TextEdit::singleline(&mut self.frag_export_csv_buf).desired_width(155.0));
+            save_path_row_button(
+                ui,
+                &mut self.frag_export_csv_buf,
+                "Choose Grown Fragments CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Grown CSV").clicked() && !rep.candidates.is_empty() {
                 let out = self.frag_export_csv_buf.trim().to_string();
                 let csv = export_grown_fragments_csv(&rep.candidates);
@@ -14162,7 +14515,14 @@ impl SarAtlasGuiApp {
                     Err(e) => self.status_banner = format!("CSV export error: {e}"),
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.frag_export_sdf_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.frag_export_sdf_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.frag_export_sdf_buf,
+                "Choose Grown Fragments SDF Path",
+                "MDL SDF",
+                &["sdf"],
+            );
             if ui.small_button("Export 2D SDF").clicked() && !rep.candidates.is_empty() {
                 let out = self.frag_export_sdf_buf.trim().to_string();
                 let sdf = format_grown_fragments_sdf(&rep.candidates);
@@ -15021,7 +15381,14 @@ impl SarAtlasGuiApp {
             }
             ui.separator();
             ui.add(
-                egui::TextEdit::singleline(&mut self.prodrug_export_csv_buf).desired_width(175.0),
+                egui::TextEdit::singleline(&mut self.prodrug_export_csv_buf).desired_width(155.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.prodrug_export_csv_buf,
+                "Choose Prodrug CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Export Prodrug CSV").clicked() && !rep.candidates.is_empty() {
                 let out = self.prodrug_export_csv_buf.trim().to_string();
@@ -15037,7 +15404,14 @@ impl SarAtlasGuiApp {
                 }
             }
             ui.add(
-                egui::TextEdit::singleline(&mut self.prodrug_export_sdf_buf).desired_width(165.0),
+                egui::TextEdit::singleline(&mut self.prodrug_export_sdf_buf).desired_width(150.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.prodrug_export_sdf_buf,
+                "Choose Prodrug SDF Path",
+                "MDL SDF",
+                &["sdf"],
             );
             if ui.small_button("Export 2D SDF").clicked() && !rep.candidates.is_empty() {
                 let out = self.prodrug_export_sdf_buf.trim().to_string();
@@ -15732,10 +16106,27 @@ impl SarAtlasGuiApp {
             );
             ui.checkbox(&mut self.pbpk_log_scale_y, "Log10 nM Axis");
             ui.checkbox(&mut self.pbpk_show_total_plasma, "Show Total Plasma Cp");
+            ui.checkbox(&mut self.pbpk_show_ci90_band, "Show 90% Pop CI");
+            ui.checkbox(&mut self.pbpk_km_override_enabled, "Override CYP3A4 Km");
+            if self.pbpk_km_override_enabled {
+                ui.add(
+                    egui::Slider::new(&mut self.pbpk_km_um, 0.5..=50.0)
+                        .logarithmic(true)
+                        .suffix(" uM")
+                        .fixed_decimals(1),
+                );
+            }
             ui.separator();
 
             ui.add(
-                egui::TextEdit::singleline(&mut self.pbpk_export_curve_buf).desired_width(175.0),
+                egui::TextEdit::singleline(&mut self.pbpk_export_curve_buf).desired_width(155.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.pbpk_export_curve_buf,
+                "Choose PBPK Time-Course CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Export Time-Course CSV").clicked() {
                 if let Some(ref rep) = self.pbpk_report {
@@ -15752,7 +16143,14 @@ impl SarAtlasGuiApp {
                     }
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.pbpk_export_ds_buf).desired_width(175.0));
+            ui.add(egui::TextEdit::singleline(&mut self.pbpk_export_ds_buf).desired_width(155.0));
+            save_path_row_button(
+                ui,
+                &mut self.pbpk_export_ds_buf,
+                "Choose Dataset PBPK CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Dataset PBPK CSV").clicked()
                 && !self.pbpk_dataset_rows.is_empty()
             {
@@ -15775,16 +16173,19 @@ impl SarAtlasGuiApp {
             regimen: self.pbpk_regimen,
             prandial: self.pbpk_prandial,
             inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+            cyp3a4_km_um: self.pbpk_km_override_enabled.then_some(self.pbpk_km_um as f64),
+            ..PbpkDosingConfig::default()
         };
 
         let cache_key = format!(
-            "{}|{}|{:.2}|{:?}|{:?}|{}|{:.4}",
+            "{}|{}|{:.2}|{:?}|{:?}|{}|{:?}|{:.4}",
             target_mol.id,
             target_mol.smiles,
             cfg.dose_mg,
             cfg.regimen,
             cfg.prandial,
             cfg.inhibit_bbb_efflux,
+            cfg.cyp3a4_km_um,
             target_mol.raw_nm
         );
         if self.pbpk_cached_key != cache_key || self.pbpk_report.is_none() {
@@ -15815,8 +16216,10 @@ impl SarAtlasGuiApp {
             ui.colored_label(
                 Color32::from_rgb(52, 211, 153),
                 RichText::new(format!(
-                    "F_oral = {:.1}% (Fa {:.0}% x Fg {:.0}% x Fh {:.0}%)",
+                    "F_oral = {:.1}% (90% CI [{:.1}%, {:.1}%] | Fa {:.0}% x Fg {:.0}% x Fh {:.0}%)",
                     rep.f_oral_pct,
+                    rep.f_oral_ci90[0],
+                    rep.f_oral_ci90[1],
                     rep.fa_integrated * 100.0,
                     rep.fg_gut_wall * 100.0,
                     rep.fh_hepatic * 100.0
@@ -15827,11 +16230,13 @@ impl SarAtlasGuiApp {
             ui.colored_label(
                 Color32::from_rgb(cr, cg, cb),
                 RichText::new(format!(
-                    "Kp,uu,brain = {:.3} ({}, Total Kp,brain = {:.2}, Efflux ER = {:.2}x)",
+                    "Kp,uu,brain = {:.3} ({}, Total Kp,brain = {:.2}, ER = {:.2}x) | CYP3A4 Km = {:.2} uM (Sat {:.1}%)",
                     rep.kp_uu_brain,
                     rep.cns_class.short_label(),
                     rep.kp_brain_total,
-                    rep.bbb_efflux_ratio
+                    rep.bbb_efflux_ratio,
+                    rep.cyp3a4_km_um,
+                    rep.cyp3a4_peak_saturation_pct
                 ))
                 .strong(),
             );
@@ -15879,13 +16284,16 @@ impl SarAtlasGuiApp {
                             &rep,
                             self.pbpk_log_scale_y,
                             self.pbpk_show_total_plasma,
+                            self.pbpk_show_ci90_band,
                         );
 
                         ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
                             ui.monospace(format!(
-                                "Cu,p Cmax {:.1} nM @ {:.1}h (T>IC50: {:.1}h, Peak RO {:.0}%)",
+                                "Cu,p Cmax {:.1} nM (90% CI [{:.1}, {:.1}]) @ {:.1}h (T>IC50: {:.1}h, RO {:.0}%)",
                                 rep.cmax_unbound_plasma_nm,
+                                rep.cmax_u_plasma_ci90_nm[0],
+                                rep.cmax_u_plasma_ci90_nm[1],
                                 rep.tmax_plasma_hr,
                                 rep.time_above_ic50_plasma_hr,
                                 rep.peak_ro_plasma_pct
@@ -15894,8 +16302,10 @@ impl SarAtlasGuiApp {
                             ui.colored_label(
                                 Color32::from_rgb(52, 211, 153),
                                 RichText::new(format!(
-                                    "Cu,brain Cmax {:.1} nM @ {:.1}h (T>IC50: {:.1}h, Peak Brain RO {:.0}%)",
+                                    "Cu,brain Cmax {:.1} nM (90% CI [{:.1}, {:.1}]) @ {:.1}h (T>IC50: {:.1}h, Brain RO {:.0}%)",
                                     rep.cmax_unbound_brain_nm,
+                                    rep.cmax_u_brain_ci90_nm[0],
+                                    rep.cmax_u_brain_ci90_nm[1],
                                     rep.tmax_brain_hr,
                                     rep.time_above_ic50_brain_hr,
                                     rep.peak_ro_brain_pct
@@ -16049,14 +16459,111 @@ impl SarAtlasGuiApp {
     }
 }
 
+/// Renders a compact quantitative colorbar overlay in the bottom-right corner of the SALI Map canvas.
+fn paint_sali_heatmap_colorbar(
+    painter: &egui::Painter,
+    canvas_rect: Rect,
+    layer: HeatmapLayer,
+) {
+    if canvas_rect.width() < 240.0 || canvas_rect.height() < 90.0 {
+        return;
+    }
+    let card_w = 216.0_f32;
+    let card_h = 50.0_f32;
+    let card = Rect::from_min_size(
+        Pos2::new(canvas_rect.right() - card_w - 10.0, canvas_rect.bottom() - card_h - 10.0),
+        Vec2::new(card_w, card_h),
+    );
+    painter.rect_filled(card, 5.0, Color32::from_rgba_unmultiplied(11, 17, 32, 224));
+    painter.rect_stroke(
+        card,
+        5.0,
+        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        egui::StrokeKind::Inside,
+    );
+
+    let (title, t_min, t_mid, t_max, use_inferno) = match layer {
+        HeatmapLayer::PotencySurface => ("Potency Surface (pAct)", "4.5", "7.8", "11.0 pAct", false),
+        HeatmapLayer::SaliCliffIntensity => ("SALI Cliff Intensity", "0", "15", "30+ SALI", true),
+        HeatmapLayer::CnsMpoDesirability => ("CNS-MPO Desirability", "0.0", "3.0", "6.0 MPO", false),
+        HeatmapLayer::CompoundDensity => ("Compound Density", "0.0", "0.5", "1.0 Dens", false),
+    };
+
+    painter.text(
+        Pos2::new(card.left() + 8.0, card.top() + 9.0),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::monospace(9.2),
+        Color32::from_rgb(226, 232, 240),
+    );
+
+    let bar = Rect::from_min_size(
+        Pos2::new(card.left() + 8.0, card.top() + 19.0),
+        Vec2::new(card_w - 16.0, 11.0),
+    );
+    let steps = 32usize;
+    let step_w = bar.width() / (steps as f32);
+    for s in 0..steps {
+        let t = (s as f32 + 0.5) / (steps as f32);
+        let rgb = if use_inferno {
+            inferno_cliff_rgb(t)
+        } else {
+            viridis_rgb(t)
+        };
+        let seg = Rect::from_min_max(
+            Pos2::new(bar.left() + (s as f32) * step_w, bar.top()),
+            Pos2::new(bar.left() + ((s + 1) as f32) * step_w + 0.5, bar.bottom()),
+        );
+        painter.rect_filled(
+            seg,
+            0.0,
+            Color32::from_rgb(
+                (rgb[0] * 255.0) as u8,
+                (rgb[1] * 255.0) as u8,
+                (rgb[2] * 255.0) as u8,
+            ),
+        );
+    }
+    painter.rect_stroke(
+        bar,
+        1.0,
+        Stroke::new(0.8, Color32::from_rgb(71, 85, 105)),
+        egui::StrokeKind::Inside,
+    );
+
+    let y_lbl = bar.bottom() + 9.0;
+    painter.text(
+        Pos2::new(bar.left(), y_lbl),
+        egui::Align2::LEFT_CENTER,
+        t_min,
+        egui::FontId::monospace(8.5),
+        Color32::from_rgb(148, 163, 184),
+    );
+    painter.text(
+        Pos2::new(bar.center().x, y_lbl),
+        egui::Align2::CENTER_CENTER,
+        t_mid,
+        egui::FontId::monospace(8.5),
+        Color32::from_rgb(148, 163, 184),
+    );
+    painter.text(
+        Pos2::new(bar.right(), y_lbl),
+        egui::Align2::RIGHT_CENTER,
+        t_max,
+        egui::FontId::monospace(8.5),
+        Color32::from_rgb(148, 163, 184),
+    );
+}
+
 /// Renders the multi-curve `RK4` Oral PBPK Concentration-Time Plot (`Cu,plasma`, `Cu,brain`,
-/// optional `C_total,plasma`, and horizontal target `IC50` / `IC90` efficacy thresholds).
+/// optional `C_total,plasma`, 90% virtual-population CI bands, and horizontal target `IC50` / `IC90` thresholds).
 fn paint_oral_pbpk_curves(
     painter: &egui::Painter,
     rect: Rect,
     rep: &OralPbpkReport,
     log_scale: bool,
     show_total_p: bool,
+    show_ci90_band: bool,
 ) {
     painter.rect_filled(rect, 6.0, Color32::from_rgb(11, 17, 32));
     let painter = painter.with_clip_rect(rect);
@@ -16082,6 +16589,14 @@ fn paint_oral_pbpk_curves(
         c_peak = c_peak
             .max(rep.c_unbound_plasma_nm[i])
             .max(rep.c_unbound_brain_nm[i]);
+        if show_ci90_band && rep.virtual_pop_n >= 10 {
+            c_peak = c_peak
+                .max(rep.c_unbound_plasma_p95_nm[i])
+                .max(rep.c_unbound_brain_p95_nm[i]);
+            if rep.c_unbound_brain_p05_nm[i] > 1e-4 {
+                c_floor = c_floor.min(rep.c_unbound_brain_p05_nm[i] * 0.5);
+            }
+        }
         if rep.c_unbound_brain_nm[i] > 1e-4 {
             c_floor = c_floor.min(rep.c_unbound_brain_nm[i] * 0.5);
         }
@@ -16174,6 +16689,35 @@ fn paint_oral_pbpk_curves(
                 col,
             );
         }
+    }
+
+    // 0. Virtual-Population 90% CI (P5-P95) shaded ribbons
+    if show_ci90_band && rep.virtual_pop_n >= 10 {
+        let paint_ci_ribbon = |p05: &[f32; PBPK_TIME_POINTS], p95: &[f32; PBPK_TIME_POINTS], col: Color32| {
+            let mut mesh = egui::Mesh::default();
+            for i in 0..PBPK_TIME_POINTS {
+                let hi = map_pt(rep.time_hr[i], p95[i]);
+                let lo = map_pt(rep.time_hr[i], p05[i]);
+                let base = mesh.vertices.len() as u32;
+                mesh.colored_vertex(hi, col);
+                mesh.colored_vertex(lo, col);
+                if i + 1 < PBPK_TIME_POINTS {
+                    mesh.add_triangle(base, base + 1, base + 2);
+                    mesh.add_triangle(base + 1, base + 3, base + 2);
+                }
+            }
+            painter.add(egui::Shape::mesh(mesh));
+        };
+        paint_ci_ribbon(
+            &rep.c_unbound_plasma_p05_nm,
+            &rep.c_unbound_plasma_p95_nm,
+            Color32::from_rgba_unmultiplied(56, 189, 248, 34),
+        );
+        paint_ci_ribbon(
+            &rep.c_unbound_brain_p05_nm,
+            &rep.c_unbound_brain_p95_nm,
+            Color32::from_rgba_unmultiplied(52, 211, 153, 34),
+        );
     }
 
     // 1. Optional Total Plasma Cp(t) (muted slate)
@@ -16366,6 +16910,7 @@ impl SarAtlasGuiApp {
     }
 
     fn reset_all_filters(&mut self) {
+        let target_changed = self.target_filter != "All";
         self.search_query.clear();
         self.smarts_input.clear();
         self.recompute_smarts();
@@ -16379,6 +16924,9 @@ impl SarAtlasGuiApp {
         self.max_sa_score = 10.0;
         self.scene_dirty = true;
         self.heatmap_dirty = true;
+        if target_changed {
+            self.camera_autofit_pending = true;
+        }
         self.status_banner = "Cleared all SMARTS, target, PAINS, QED, CNS-MPO, and SAScore filters.".to_string();
     }
 
@@ -16486,17 +17034,23 @@ impl SarAtlasGuiApp {
             self.navigate_to_tab(target_tab);
         }
         if quick_save_sqlite {
-            let out = Path::new("sar_campaign.sqlite");
-            let snap = self.capture_workspace_snapshot();
-            match save_project_sqlite(out, &snap, &self.ds) {
-                Ok(()) => {
-                    self.status_banner = format!(
-                        "Saved SQLite 3 workspace ({} mols) -> {}",
-                        self.ds.mols.len(),
-                        out.display()
-                    );
+            if let Some(out) = pick_save_file(
+                "Save SQLite Workspace",
+                "sar_campaign.sqlite",
+                "SQLite Workspace",
+                &["sqlite"],
+            ) {
+                let snap = self.capture_workspace_snapshot();
+                match save_project_sqlite(&out, &snap, &self.ds) {
+                    Ok(()) => {
+                        self.status_banner = format!(
+                            "Saved SQLite 3 workspace ({} mols) -> {}",
+                            self.ds.mols.len(),
+                            out.display()
+                        );
+                    }
+                    Err(e) => self.status_banner = format!("SQLite save error: {e}"),
                 }
-                Err(e) => self.status_banner = format!("SQLite save error: {e}"),
             }
         }
     }
@@ -16516,9 +17070,21 @@ impl SarAtlasGuiApp {
 
             // 1. File & Workspace Persistence Menu
             ui.menu_button(RichText::new("File").strong(), |ui| {
-                ui.set_min_width(290.0);
+                ui.set_min_width(310.0);
                 ui.label(RichText::new("Dataset / Workspace Path:").small());
-                ui.add(egui::TextEdit::singleline(&mut self.io_path_buf).desired_width(270.0));
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut self.io_path_buf).desired_width(215.0));
+                    if open_path_row_button(
+                        ui,
+                        &mut self.io_path_buf,
+                        "Browse Dataset or Workspace File",
+                        "Molecules / Workspaces",
+                        &["sdf", "mol", "smi", "csv", "sqlite", "sqlite3", "db", "json"],
+                    ) {
+                        trigger_load = true;
+                        ui.close_menu();
+                    }
+                });
                 if ui
                     .button("Open .smi / .csv / .sdf / .sqlite / .json")
                     .clicked()
@@ -16527,86 +17093,127 @@ impl SarAtlasGuiApp {
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("Save Workspace (.sqlite)   [Ctrl+S]").clicked() {
-                    let out = Path::new("sar_campaign.sqlite");
-                    let snap = self.capture_workspace_snapshot();
-                    match save_project_sqlite(out, &snap, &self.ds) {
-                        Ok(()) => {
-                            self.status_banner = format!(
-                                "Saved SQLite 3 workspace ({} mols) -> {}",
-                                self.ds.mols.len(),
-                                out.display()
-                            )
+                if ui.button("Save Workspace (.sqlite)...   [Ctrl+S]").clicked() {
+                    if let Some(out) = pick_save_file(
+                        "Save SQLite Workspace",
+                        "sar_campaign.sqlite",
+                        "SQLite Workspace",
+                        &["sqlite"],
+                    ) {
+                        let snap = self.capture_workspace_snapshot();
+                        match save_project_sqlite(&out, &snap, &self.ds) {
+                            Ok(()) => {
+                                self.status_banner = format!(
+                                    "Saved SQLite 3 workspace ({} mols) -> {}",
+                                    self.ds.mols.len(),
+                                    out.display()
+                                )
+                            }
+                            Err(e) => self.status_banner = format!("SQLite save error: {e}"),
                         }
-                        Err(e) => self.status_banner = format!("SQLite save error: {e}"),
                     }
                     ui.close_menu();
                 }
-                if ui.button("Save Workspace (.saratlas.json)").clicked() {
-                    let out = Path::new("sar_campaign.saratlas.json");
-                    let snap = self.capture_workspace_snapshot();
-                    match save_project_json(out, &snap) {
-                        Ok(()) => {
-                            self.status_banner = format!(
-                                "Saved JSON workspace ({} mols) -> {}",
-                                self.ds.mols.len(),
-                                out.display()
-                            )
+                if ui.button("Save Workspace (.saratlas.json)...").clicked() {
+                    if let Some(out) = pick_save_file(
+                        "Save JSON Workspace",
+                        "sar_campaign.saratlas.json",
+                        "SAR-Atlas JSON Workspace",
+                        &["json"],
+                    ) {
+                        let snap = self.capture_workspace_snapshot();
+                        match save_project_json(&out, &snap) {
+                            Ok(()) => {
+                                self.status_banner = format!(
+                                    "Saved JSON workspace ({} mols) -> {}",
+                                    self.ds.mols.len(),
+                                    out.display()
+                                )
+                            }
+                            Err(e) => self.status_banner = format!("JSON save error: {e}"),
                         }
-                        Err(e) => self.status_banner = format!("JSON save error: {e}"),
                     }
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("Export Dataset Summary (.csv)").clicked() {
-                    let out = "sar_atlas_summary.csv";
-                    match std::fs::write(out, self.ds.export_summary_csv()) {
-                        Ok(_) => self.status_banner = format!("Wrote {out}"),
-                        Err(e) => self.status_banner = format!("Write error: {e}"),
+                if ui.button("Export Dataset Summary (.csv)...").clicked() {
+                    if let Some(out) = pick_save_file(
+                        "Export Dataset Summary (.csv)",
+                        "sar_atlas_summary.csv",
+                        "CSV Table",
+                        &["csv"],
+                    ) {
+                        match std::fs::write(&out, self.ds.export_summary_csv()) {
+                            Ok(_) => self.status_banner = format!("Wrote {}", out.display()),
+                            Err(e) => self.status_banner = format!("Write error: {e}"),
+                        }
                     }
                     ui.close_menu();
                 }
-                if ui.button("Export Filtered Structures (.sdf)").clicked() {
-                    let out = "sar_atlas_filtered.sdf";
-                    let vis_mols: Vec<_> = (0..self.ds.mols.len())
-                        .filter(|&i| self.visible_mask.get(i).copied().unwrap_or(true))
-                        .map(|i| self.ds.mols[i].clone())
-                        .collect();
-                    match std::fs::write(out, format_sdf_dataset(&vis_mols)) {
-                        Ok(_) => {
-                            self.status_banner =
-                                format!("Exported {} V2000 records to {out}", vis_mols.len())
+                if ui.button("Export Filtered Structures (.sdf)...").clicked() {
+                    if let Some(out) = pick_save_file(
+                        "Export Filtered Structures (.sdf)",
+                        "sar_atlas_filtered.sdf",
+                        "MDL SDF",
+                        &["sdf"],
+                    ) {
+                        let vis_mols: Vec<_> = (0..self.ds.mols.len())
+                            .filter(|&i| self.visible_mask.get(i).copied().unwrap_or(true))
+                            .map(|i| self.ds.mols[i].clone())
+                            .collect();
+                        match std::fs::write(&out, format_sdf_dataset(&vis_mols)) {
+                            Ok(_) => {
+                                self.status_banner = format!(
+                                    "Exported {} V2000 records to {}",
+                                    vis_mols.len(),
+                                    out.display()
+                                )
+                            }
+                            Err(e) => self.status_banner = format!("Write error: {e}"),
                         }
-                        Err(e) => self.status_banner = format!("Write error: {e}"),
                     }
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("Export Selected Lead Dossier (.html)").clicked()
+                if ui.button("Export Selected Lead Dossier (.html)...").clicked()
                     && !self.ds.mols.is_empty()
                 {
-                    let idx = self.selected_mol.min(self.ds.mols.len() - 1);
-                    let doss = build_lead_campaign_dossier(
-                        &self.ds.mols[idx],
-                        Some(&self.ds),
-                        Some(idx),
-                        self.dossier_profile,
-                        PbpkDosingConfig {
-                            dose_mg: self.pbpk_dose_mg as f64,
-                            regimen: self.pbpk_regimen,
-                            prandial: self.pbpk_prandial,
-                            inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
-                        },
-                    );
-                    let out = self.dossier_export_html_buf.trim().to_string();
-                    match std::fs::write(&out, export_lead_dossier_html(&doss)) {
-                        Ok(_) => {
-                            self.status_banner = format!(
-                                "Exported standalone HTML/SVG dossier for {} -> {out}",
-                                doss.scorecard.name
-                            )
+                    let def_name = Path::new(self.dossier_export_html_buf.trim())
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("lead_medchem_dossier_v210.html");
+                    if let Some(out) = pick_save_file(
+                        "Export Selected Lead Dossier (.html)",
+                        def_name,
+                        "HTML Dossier",
+                        &["html"],
+                    ) {
+                        self.dossier_export_html_buf = out.display().to_string();
+                        let idx = self.selected_mol.min(self.ds.mols.len() - 1);
+                        let doss = build_lead_campaign_dossier(
+                            &self.ds.mols[idx],
+                            Some(&self.ds),
+                            Some(idx),
+                            self.dossier_profile,
+                            PbpkDosingConfig {
+                                dose_mg: self.pbpk_dose_mg as f64,
+                                regimen: self.pbpk_regimen,
+                                prandial: self.pbpk_prandial,
+                                inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+                                cyp3a4_km_um: self.pbpk_km_override_enabled.then_some(self.pbpk_km_um as f64),
+                                ..PbpkDosingConfig::default()
+                            },
+                        );
+                        match std::fs::write(&out, export_lead_dossier_html(&doss)) {
+                            Ok(_) => {
+                                self.status_banner = format!(
+                                    "Exported standalone HTML/SVG dossier for {} -> {}",
+                                    doss.scorecard.name,
+                                    out.display()
+                                )
+                            }
+                            Err(e) => self.status_banner = format!("HTML write error: {e}"),
                         }
-                        Err(e) => self.status_banner = format!("HTML write error: {e}"),
                     }
                     ui.close_menu();
                 }
@@ -16733,6 +17340,14 @@ impl SarAtlasGuiApp {
                 }
             });
 
+            if ui
+                .button(RichText::new("About").strong())
+                .on_hover_text("About SAR-Atlas, version, license & CRV Science Network")
+                .clicked()
+            {
+                self.about_open = true;
+            }
+
             ui.separator();
 
             // Prominent Command Palette Search Trigger Pill
@@ -16828,10 +17443,10 @@ impl SarAtlasGuiApp {
 
             ui.separator();
 
-            // [Active Lead: ◀ BRIDGES-56 (pIC50 | MW | cLogP | QED) ▶]
+            // [Active Lead: < BRIDGES-56 (pIC50 | MW | cLogP | QED) >]
             ui.label(RichText::new("Active Lead:").strong().size(11.0));
             if ui
-                .small_button("◀")
+                .small_button("<")
                 .on_hover_text("Previous compound in active series")
                 .clicked()
             {
@@ -16854,7 +17469,7 @@ impl SarAtlasGuiApp {
                 ui.small("None");
             }
             if ui
-                .small_button("▶")
+                .small_button(">")
                 .on_hover_text("Next compound in active series")
                 .clicked()
             {
@@ -16940,9 +17555,9 @@ impl SarAtlasGuiApp {
 
             ui.separator();
 
-            // Clean "Studio Tool ▾" selector pill replacing 15 wrapping sub-tab chips
+            // Clean "Studio Tool v" selector pill replacing 15 wrapping sub-tab chips
             let [dr, dg, db] = active_dom.rgb();
-            let tool_pill = RichText::new(format!("Studio Tool: {} ▾", self.active_tab.sub_label()))
+            let tool_pill = RichText::new(format!("Studio Tool: {} v", self.active_tab.sub_label()))
                 .strong()
                 .size(11.8)
                 .color(Color32::from_rgb(dr, dg, db));
@@ -17166,10 +17781,12 @@ impl SarAtlasGuiApp {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new("Ctrl+K Palette | Ctrl+B List | Ctrl+I Inspector | F11 Zen")
-                        .monospace()
-                        .size(10.5)
-                        .color(Color32::from_rgb(100, 116, 139)),
+                    RichText::new(
+                        "Copyright CRV Science Network  |  Ctrl+K Palette | Ctrl+B List | Ctrl+I Inspector | F11 Zen",
+                    )
+                    .monospace()
+                    .size(10.5)
+                    .color(Color32::from_rgb(148, 163, 184)),
                 );
             });
         });
@@ -17615,6 +18232,8 @@ impl SarAtlasGuiApp {
             regimen: self.pbpk_regimen,
             prandial: self.pbpk_prandial,
             inhibit_bbb_efflux: self.pbpk_inhibit_bbb_efflux,
+            cyp3a4_km_um: self.pbpk_km_override_enabled.then_some(self.pbpk_km_um as f64),
+            ..PbpkDosingConfig::default()
         };
 
         let camp_ds = self.active_campaign_dataset();
@@ -17667,7 +18286,14 @@ impl SarAtlasGuiApp {
 
         // Top Bar 2: Standalone HTML / SVG / Campaign Portfolio / CSV Exporters
         ui.horizontal_wrapped(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.dossier_export_html_buf).desired_width(185.0));
+            ui.add(egui::TextEdit::singleline(&mut self.dossier_export_html_buf).desired_width(165.0));
+            save_path_row_button(
+                ui,
+                &mut self.dossier_export_html_buf,
+                "Choose Lead HTML Dossier Path",
+                "HTML Dossier",
+                &["html"],
+            );
             if ui
                 .button(
                     RichText::new("Export Lead HTML Dossier")
@@ -17688,7 +18314,14 @@ impl SarAtlasGuiApp {
                 }
             }
 
-            ui.add(egui::TextEdit::singleline(&mut self.dossier_export_svg_buf).desired_width(175.0));
+            ui.add(egui::TextEdit::singleline(&mut self.dossier_export_svg_buf).desired_width(155.0));
+            save_path_row_button(
+                ui,
+                &mut self.dossier_export_svg_buf,
+                "Choose Lead SVG Poster Path",
+                "SVG Image",
+                &["svg"],
+            );
             if ui.button("Export SVG Poster").clicked() {
                 let out = self.dossier_export_svg_buf.trim().to_string();
                 match std::fs::write(&out, export_lead_dossier_svg(&dossier)) {
@@ -17706,7 +18339,14 @@ impl SarAtlasGuiApp {
             ui.add(egui::DragValue::new(&mut self.dossier_top_n_html).range(1..=15));
             ui.add(
                 egui::TextEdit::singleline(&mut self.dossier_export_camp_html_buf)
-                    .desired_width(195.0),
+                    .desired_width(175.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.dossier_export_camp_html_buf,
+                "Choose Campaign HTML Path",
+                "HTML Report",
+                &["html"],
             );
             if ui
                 .button(
@@ -18491,7 +19131,23 @@ impl SarAtlasGuiApp {
                 }
             }
             ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.pocket_pdb_path_buf).desired_width(155.0));
+            ui.add(egui::TextEdit::singleline(&mut self.pocket_pdb_path_buf).desired_width(140.0));
+            if open_path_row_button(
+                ui,
+                &mut self.pocket_pdb_path_buf,
+                "Browse Receptor .pdb File",
+                "PDB Structure",
+                &["pdb", "ent"],
+            ) {
+                let path_s = self.pocket_pdb_path_buf.trim().to_string();
+                match std::fs::read_to_string(&path_s) {
+                    Ok(raw) => {
+                        self.pocket_custom_pdb_raw = Some(raw);
+                        self.status_banner = format!("Loaded PDB receptor structure from {path_s}");
+                    }
+                    Err(e) => self.status_banner = format!("PDB read error: {e}"),
+                }
+            }
             if ui.small_button("Load .pdb File").clicked() {
                 let path_s = self.pocket_pdb_path_buf.trim().to_string();
                 match std::fs::read_to_string(&path_s) {
@@ -19347,25 +20003,54 @@ impl SarAtlasGuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.sel_target_pdb_buf)
                     .hint_text("Custom Target .pdb")
-                    .desired_width(115.0),
+                    .desired_width(110.0),
+            );
+            open_path_row_button(
+                ui,
+                &mut self.sel_target_pdb_buf,
+                "Browse Target .pdb File",
+                "PDB Structure",
+                &["pdb", "ent"],
             );
             ui.add(
                 egui::TextEdit::singleline(&mut self.sel_offtarget_pdb_buf)
                     .hint_text("Custom OffTarget .pdb")
-                    .desired_width(125.0),
+                    .desired_width(115.0),
+            );
+            open_path_row_button(
+                ui,
+                &mut self.sel_offtarget_pdb_buf,
+                "Browse Off-Target .pdb File",
+                "PDB Structure",
+                &["pdb", "ent"],
             );
             if ui.small_button("Load Dual .pdb").clicked() {
                 let tp = self.sel_target_pdb_buf.trim().to_string();
                 let op = self.sel_offtarget_pdb_buf.trim().to_string();
+                let mut errs = Vec::new();
+                let mut loaded_cnt = 0usize;
                 if !tp.is_empty() {
-                    if let Ok(raw) = std::fs::read_to_string(&tp) {
-                        self.sel_custom_target_raw = Some(raw);
+                    match std::fs::read_to_string(&tp) {
+                        Ok(raw) => {
+                            self.sel_custom_target_raw = Some(raw);
+                            loaded_cnt += 1;
+                        }
+                        Err(e) => errs.push(format!("Target PDB ({tp}): {e}")),
                     }
                 }
                 if !op.is_empty() {
-                    if let Ok(raw) = std::fs::read_to_string(&op) {
-                        self.sel_custom_offtarget_raw = Some(raw);
+                    match std::fs::read_to_string(&op) {
+                        Ok(raw) => {
+                            self.sel_custom_offtarget_raw = Some(raw);
+                            loaded_cnt += 1;
+                        }
+                        Err(e) => errs.push(format!("Off-target PDB ({op}): {e}")),
                     }
+                }
+                if !errs.is_empty() {
+                    self.status_banner = format!("PDB read error: {}", errs.join(" | "));
+                } else if loaded_cnt > 0 {
+                    self.status_banner = format!("Loaded {loaded_cnt} dual selectivity PDB structure(s).");
                 }
             }
         });
@@ -19818,8 +20503,25 @@ impl SarAtlasGuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.allo_pdb_path_buf)
                     .hint_text("Custom .pdb path")
-                    .desired_width(130.0),
+                    .desired_width(120.0),
             );
+            if open_path_row_button(
+                ui,
+                &mut self.allo_pdb_path_buf,
+                "Browse Allosteric Receptor .pdb File",
+                "PDB Structure",
+                &["pdb", "ent"],
+            ) {
+                let p = self.allo_pdb_path_buf.trim().to_string();
+                match std::fs::read_to_string(&p) {
+                    Ok(raw) => {
+                        self.allo_custom_pdb_raw = Some(raw);
+                        self.allo_selected_site_idx = 0;
+                        self.status_banner = format!("Loaded allosteric receptor PDB from {p}");
+                    }
+                    Err(e) => self.status_banner = format!("PDB read error: {e}"),
+                }
+            }
             if ui.small_button("Load .pdb").clicked() {
                 let p = self.allo_pdb_path_buf.trim().to_string();
                 match std::fs::read_to_string(&p) {
@@ -21576,8 +22278,15 @@ impl SarAtlasGuiApp {
             if self.esp_cfg.preset == EspTargetPreset::CustomPdbEspComplementarity {
                 ui.label("Custom .PDB Path:");
                 if ui
-                    .add(egui::TextEdit::singleline(&mut self.esp_custom_pdb_buf).desired_width(205.0))
+                    .add(egui::TextEdit::singleline(&mut self.esp_custom_pdb_buf).desired_width(185.0))
                     .changed()
+                    || open_path_row_button(
+                        ui,
+                        &mut self.esp_custom_pdb_buf,
+                        "Browse Custom Receptor .pdb",
+                        "PDB Structure",
+                        &["pdb", "ent"],
+                    )
                 {
                     self.esp_cfg.custom_pdb_path = (!self.esp_custom_pdb_buf.trim().is_empty())
                         .then(|| self.esp_custom_pdb_buf.trim().to_string());
@@ -21925,7 +22634,14 @@ impl SarAtlasGuiApp {
                 self.esp_bottom_subtab = 2;
             }
             ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.esp_export_contacts_buf).desired_width(155.0));
+            ui.add(egui::TextEdit::singleline(&mut self.esp_export_contacts_buf).desired_width(140.0));
+            save_path_row_button(
+                ui,
+                &mut self.esp_export_contacts_buf,
+                "Choose ESP Contacts CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Contacts CSV").clicked() {
                 let p = self.esp_export_contacts_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_esp_contacts_csv(&rep)) {
@@ -21934,7 +22650,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported multipole contacts CSV -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.esp_export_designs_buf).desired_width(155.0));
+            ui.add(egui::TextEdit::singleline(&mut self.esp_export_designs_buf).desired_width(140.0));
+            save_path_row_button(
+                ui,
+                &mut self.esp_export_designs_buf,
+                "Choose ESP Designs CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Designs CSV").clicked() {
                 let p = self.esp_export_designs_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_esp_designs_csv(&rep)) {
@@ -21943,7 +22666,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported ESP bioisostere designs CSV -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.esp_export_pdb_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.esp_export_pdb_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.esp_export_pdb_buf,
+                "Choose XED Multipole PDB Path",
+                "PDB Structure",
+                &["pdb"],
+            );
             if ui.small_button("Export XED .PDB").clicked() {
                 let p = self.esp_export_pdb_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, format_esp_multipole_pdb(&rep)) {
@@ -22188,12 +22918,26 @@ impl SarAtlasGuiApp {
                     ui.label(".PDB Path:");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.pubpdb_local_pdb_buf)
-                            .desired_width(170.0),
+                            .desired_width(150.0),
+                    );
+                    open_path_row_button(
+                        ui,
+                        &mut self.pubpdb_local_pdb_buf,
+                        "Browse Local .pdb / .cif Structure",
+                        "PDB / mmCIF",
+                        &["pdb", "ent", "cif"],
                     );
                     ui.label("Optional PAE .JSON:");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.pubpdb_local_pae_buf)
-                            .desired_width(155.0),
+                            .desired_width(140.0),
+                    );
+                    open_path_row_button(
+                        ui,
+                        &mut self.pubpdb_local_pae_buf,
+                        "Browse AlphaFold PAE .json",
+                        "PAE JSON",
+                        &["json"],
                     );
                     if ui.button("Audit Local Files").clicked() {
                         self.pubpdb_cfg.local_pdb_path =
@@ -22274,41 +23018,66 @@ impl SarAtlasGuiApp {
                 jump_to_tab = Some(WorkbenchTab::PocketCavityStudio);
             }
             if ui.small_button("WaterMap Solvation").clicked() {
-                let _ = std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text);
-                self.wm_cfg.preset = WaterMapPreset::CustomPdbWaterMap;
-                self.wm_cfg.custom_pdb_path = Some(clean_path.clone());
-                self.wm_custom_pdb_buf = clean_path.clone();
-                self.wm_cached_key.clear();
-                jump_to_tab = Some(WorkbenchTab::WaterMapSolvationStudio);
+                match std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text) {
+                    Ok(()) => {
+                        self.wm_cfg.preset = WaterMapPreset::CustomPdbWaterMap;
+                        self.wm_cfg.custom_pdb_path = Some(clean_path.clone());
+                        self.wm_custom_pdb_buf = clean_path.clone();
+                        self.wm_cached_key.clear();
+                        self.status_banner = format!("Wrote clean PDB -> {clean_path}");
+                        jump_to_tab = Some(WorkbenchTab::WaterMapSolvationStudio);
+                    }
+                    Err(e) => self.status_banner = format!("Clean PDB write error ({clean_path}): {e}"),
+                }
             }
             if ui.small_button("H-Bond Network").clicked() {
-                let _ = std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text);
-                self.hbn_cfg.preset = HBondNetworkPreset::CustomPdbHBondNetwork;
-                self.hbn_cfg.custom_pdb_path = Some(clean_path.clone());
-                self.hbn_custom_pdb_buf = clean_path.clone();
-                self.hbn_cached_key.clear();
-                jump_to_tab = Some(WorkbenchTab::HBondNetworkStudio);
+                match std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text) {
+                    Ok(()) => {
+                        self.hbn_cfg.preset = HBondNetworkPreset::CustomPdbHBondNetwork;
+                        self.hbn_cfg.custom_pdb_path = Some(clean_path.clone());
+                        self.hbn_custom_pdb_buf = clean_path.clone();
+                        self.hbn_cached_key.clear();
+                        self.status_banner = format!("Wrote clean PDB -> {clean_path}");
+                        jump_to_tab = Some(WorkbenchTab::HBondNetworkStudio);
+                    }
+                    Err(e) => self.status_banner = format!("Clean PDB write error ({clean_path}): {e}"),
+                }
             }
             if ui.small_button("Induced-Fit Ensemble").clicked() {
-                let _ = std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text);
-                self.ifd_cfg.preset = InducedFitPreset::CustomPdbFlexibleEnsemble;
-                self.ifd_cfg.custom_pdb_path = Some(clean_path.clone());
-                self.ifd_custom_pdb_buf = clean_path.clone();
-                self.ifd_cached_key.clear();
-                jump_to_tab = Some(WorkbenchTab::InducedFitStudio);
+                match std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text) {
+                    Ok(()) => {
+                        self.ifd_cfg.preset = InducedFitPreset::CustomPdbFlexibleEnsemble;
+                        self.ifd_cfg.custom_pdb_path = Some(clean_path.clone());
+                        self.ifd_custom_pdb_buf = clean_path.clone();
+                        self.ifd_cached_key.clear();
+                        self.status_banner = format!("Wrote clean PDB -> {clean_path}");
+                        jump_to_tab = Some(WorkbenchTab::InducedFitStudio);
+                    }
+                    Err(e) => self.status_banner = format!("Clean PDB write error ({clean_path}): {e}"),
+                }
             }
             if ui.small_button("Foldit 3D Sculpt").clicked() {
-                let _ = std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text);
-                self.sculpt_preset = SculptPuzzlePreset::CustomPdbFreeformSandbox;
-                self.sculpt_custom_pdb_buf = clean_path.clone();
-                self.sculpt_session = None;
-                jump_to_tab = Some(WorkbenchTab::FolditSculptStudio);
+                match std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text) {
+                    Ok(()) => {
+                        self.sculpt_preset = SculptPuzzlePreset::CustomPdbFreeformSandbox;
+                        self.sculpt_custom_pdb_buf = clean_path.clone();
+                        self.sculpt_session = None;
+                        self.status_banner = format!("Wrote clean PDB -> {clean_path}");
+                        jump_to_tab = Some(WorkbenchTab::FolditSculptStudio);
+                    }
+                    Err(e) => self.status_banner = format!("Clean PDB write error ({clean_path}): {e}"),
+                }
             }
             if ui.small_button("DMTA Funnel Target").clicked() {
-                let _ = std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text);
-                self.funnel_cfg.custom_target_pdb_path = Some(clean_path.clone());
-                self.funnel_target_pdb_buf = clean_path;
-                jump_to_tab = Some(WorkbenchTab::DiscoveryFunnelStudio);
+                match std::fs::write(&clean_path, &rep.trimmed_clean_pdb_text) {
+                    Ok(()) => {
+                        self.funnel_cfg.custom_target_pdb_path = Some(clean_path.clone());
+                        self.funnel_target_pdb_buf = clean_path.clone();
+                        self.status_banner = format!("Wrote clean PDB -> {clean_path}");
+                        jump_to_tab = Some(WorkbenchTab::DiscoveryFunnelStudio);
+                    }
+                    Err(e) => self.status_banner = format!("Clean PDB write error ({clean_path}): {e}"),
+                }
             }
         });
 
@@ -22555,7 +23324,14 @@ impl SarAtlasGuiApp {
             }
             ui.separator();
             ui.add(
-                egui::TextEdit::singleline(&mut self.pubpdb_export_csv_buf).desired_width(175.0),
+                egui::TextEdit::singleline(&mut self.pubpdb_export_csv_buf).desired_width(155.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.pubpdb_export_csv_buf,
+                "Choose pLDDT Confidence CSV Path",
+                "CSV Table",
+                &["csv"],
             );
             if ui.small_button("Export pLDDT CSV").clicked() {
                 let p = self.pubpdb_export_csv_buf.trim().to_string();
@@ -22567,7 +23343,14 @@ impl SarAtlasGuiApp {
             }
             ui.add(
                 egui::TextEdit::singleline(&mut self.pubpdb_export_clean_pdb_buf)
-                    .desired_width(185.0),
+                    .desired_width(165.0),
+            );
+            save_path_row_button(
+                ui,
+                &mut self.pubpdb_export_clean_pdb_buf,
+                "Choose Clean Receptor PDB Path",
+                "PDB Structure",
+                &["pdb"],
             );
             if ui
                 .small_button(format!(
@@ -22707,9 +23490,16 @@ impl SarAtlasGuiApp {
                 if ui
                     .add(
                         egui::TextEdit::singleline(&mut self.sculpt_custom_pdb_buf)
-                            .desired_width(210.0),
+                            .desired_width(190.0),
                     )
                     .changed()
+                    || open_path_row_button(
+                        ui,
+                        &mut self.sculpt_custom_pdb_buf,
+                        "Browse Sandbox .pdb File",
+                        "PDB Structure",
+                        &["pdb", "ent"],
+                    )
                 {
                     reset_session = true;
                 }
@@ -23379,7 +24169,14 @@ impl SarAtlasGuiApp {
                 sess.tug_frames
             ));
             ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.sculpt_export_csv_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.sculpt_export_csv_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.sculpt_export_csv_buf,
+                "Choose Sculpt Trajectory CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Trajectory CSV").clicked() {
                 let p = self.sculpt_export_csv_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_sculpt_trajectory_csv(&sess)) {
@@ -23388,7 +24185,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported Foldit sculpt trajectory -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.sculpt_export_pdb_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.sculpt_export_pdb_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.sculpt_export_pdb_buf,
+                "Choose Sculpted Complex PDB Path",
+                "PDB Structure",
+                &["pdb"],
+            );
             if ui.small_button("Export Complex .PDB").clicked() {
                 let p = self.sculpt_export_pdb_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, format_sculpted_complex_pdb(&sess)) {
@@ -23397,7 +24201,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported sculpted 3D complex PDB -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.sculpt_export_sdf_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.sculpt_export_sdf_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.sculpt_export_sdf_buf,
+                "Choose Sculpted Ligand SDF Path",
+                "MDL SDF",
+                &["sdf"],
+            );
             if ui.small_button("Export Ligand .SDF").clicked() {
                 let p = self.sculpt_export_sdf_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, format_sculpted_ligand_sdf(&sess)) {
@@ -23500,8 +24311,15 @@ impl SarAtlasGuiApp {
             if self.wm_cfg.preset == WaterMapPreset::CustomPdbWaterMap {
                 ui.label("Custom .PDB Path:");
                 if ui
-                    .add(egui::TextEdit::singleline(&mut self.wm_custom_pdb_buf).desired_width(205.0))
+                    .add(egui::TextEdit::singleline(&mut self.wm_custom_pdb_buf).desired_width(185.0))
                     .changed()
+                    || open_path_row_button(
+                        ui,
+                        &mut self.wm_custom_pdb_buf,
+                        "Browse Custom WaterMap .pdb",
+                        "PDB Structure",
+                        &["pdb", "ent"],
+                    )
                 {
                     self.wm_cfg.custom_pdb_path = (!self.wm_custom_pdb_buf.trim().is_empty())
                         .then(|| self.wm_custom_pdb_buf.trim().to_string());
@@ -23852,7 +24670,14 @@ impl SarAtlasGuiApp {
                 self.wm_bottom_subtab = 2;
             }
             ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.wm_export_sites_buf).desired_width(155.0));
+            ui.add(egui::TextEdit::singleline(&mut self.wm_export_sites_buf).desired_width(140.0));
+            save_path_row_button(
+                ui,
+                &mut self.wm_export_sites_buf,
+                "Choose WaterMap Sites CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Sites CSV").clicked() {
                 let p = self.wm_export_sites_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_watermap_sites_csv(&rep)) {
@@ -23861,7 +24686,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported WaterMap hydration sites CSV -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.wm_export_designs_buf).desired_width(155.0));
+            ui.add(egui::TextEdit::singleline(&mut self.wm_export_designs_buf).desired_width(140.0));
+            save_path_row_button(
+                ui,
+                &mut self.wm_export_designs_buf,
+                "Choose WaterMap R-Groups CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export R-Groups CSV").clicked() {
                 let p = self.wm_export_designs_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_watermap_rgroup_designs_csv(&rep)) {
@@ -23870,7 +24702,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported WaterMap R-group vectors CSV -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.wm_export_pdb_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.wm_export_pdb_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.wm_export_pdb_buf,
+                "Choose WaterMap Hotspot PDB Path",
+                "PDB Structure",
+                &["pdb"],
+            );
             if ui.small_button("Export Hotspot .PDB").clicked() {
                 let p = self.wm_export_pdb_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, format_watermap_annotated_pdb(&rep)) {
@@ -24095,8 +24934,15 @@ impl SarAtlasGuiApp {
             if self.hbn_cfg.preset == HBondNetworkPreset::CustomPdbHBondNetwork {
                 ui.label("Custom .PDB Path:");
                 if ui
-                    .add(egui::TextEdit::singleline(&mut self.hbn_custom_pdb_buf).desired_width(205.0))
+                    .add(egui::TextEdit::singleline(&mut self.hbn_custom_pdb_buf).desired_width(185.0))
                     .changed()
+                    || open_path_row_button(
+                        ui,
+                        &mut self.hbn_custom_pdb_buf,
+                        "Browse Custom H-Bond Network .pdb",
+                        "PDB Structure",
+                        &["pdb", "ent"],
+                    )
                 {
                     self.hbn_cfg.custom_pdb_path = (!self.hbn_custom_pdb_buf.trim().is_empty())
                         .then(|| self.hbn_custom_pdb_buf.trim().to_string());
@@ -24458,7 +25304,14 @@ impl SarAtlasGuiApp {
                 self.hbn_bottom_subtab = 2;
             }
             ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.hbn_export_nodes_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.hbn_export_nodes_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.hbn_export_nodes_buf,
+                "Choose H-Bond Nodes CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Nodes CSV").clicked() {
                 let p = self.hbn_export_nodes_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_hbond_network_nodes_csv(&rep)) {
@@ -24467,7 +25320,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported H-bond nodes CSV -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.hbn_export_edges_buf).desired_width(165.0));
+            ui.add(egui::TextEdit::singleline(&mut self.hbn_export_edges_buf).desired_width(150.0));
+            save_path_row_button(
+                ui,
+                &mut self.hbn_export_edges_buf,
+                "Choose H-Bond Edges CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Edges CSV").clicked() {
                 let p = self.hbn_export_edges_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_hbond_network_edges_csv(&rep)) {
@@ -24476,7 +25336,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported H-bond edges CSV -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.hbn_export_pdb_buf).desired_width(175.0));
+            ui.add(egui::TextEdit::singleline(&mut self.hbn_export_pdb_buf).desired_width(160.0));
+            save_path_row_button(
+                ui,
+                &mut self.hbn_export_pdb_buf,
+                "Choose Prepared Complex PDB Path",
+                "PDB Structure",
+                &["pdb"],
+            );
             if ui.small_button("Export Prepared .PDB").clicked() {
                 let p = self.hbn_export_pdb_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, format_optimized_hbond_complex_pdb(&rep)) {
@@ -24680,8 +25547,15 @@ impl SarAtlasGuiApp {
             if self.ifd_cfg.preset == InducedFitPreset::CustomPdbFlexibleEnsemble {
                 ui.label("Custom .PDB Path:");
                 if ui
-                    .add(egui::TextEdit::singleline(&mut self.ifd_custom_pdb_buf).desired_width(220.0))
+                    .add(egui::TextEdit::singleline(&mut self.ifd_custom_pdb_buf).desired_width(195.0))
                     .changed()
+                    || open_path_row_button(
+                        ui,
+                        &mut self.ifd_custom_pdb_buf,
+                        "Browse Custom Induced-Fit .pdb",
+                        "PDB Structure",
+                        &["pdb", "ent"],
+                    )
                 {
                     self.ifd_cfg.custom_pdb_path = (!self.ifd_custom_pdb_buf.trim().is_empty())
                         .then(|| self.ifd_custom_pdb_buf.trim().to_string());
@@ -25016,7 +25890,14 @@ impl SarAtlasGuiApp {
                 self.ifd_bottom_subtab = 1;
             }
             ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.ifd_export_rotamers_buf).desired_width(185.0));
+            ui.add(egui::TextEdit::singleline(&mut self.ifd_export_rotamers_buf).desired_width(165.0));
+            save_path_row_button(
+                ui,
+                &mut self.ifd_export_rotamers_buf,
+                "Choose Rotamers CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Rotamers CSV").clicked() {
                 let p = self.ifd_export_rotamers_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_repacked_rotamers_csv(&rep)) {
@@ -25025,7 +25906,14 @@ impl SarAtlasGuiApp {
                     self.status_banner = format!("Exported repacked Dunbrack rotamers CSV -> {p}");
                 }
             }
-            ui.add(egui::TextEdit::singleline(&mut self.ifd_export_sdf_buf).desired_width(185.0));
+            ui.add(egui::TextEdit::singleline(&mut self.ifd_export_sdf_buf).desired_width(165.0));
+            save_path_row_button(
+                ui,
+                &mut self.ifd_export_sdf_buf,
+                "Choose 5-State Ensemble SDF Path",
+                "MDL SDF",
+                &["sdf"],
+            );
             if ui.small_button("Export 5-State SDF").clicked() {
                 let p = self.ifd_export_sdf_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, format_induced_fit_ensemble_sdf(&rep)) {
@@ -25035,7 +25923,14 @@ impl SarAtlasGuiApp {
                 }
             }
             if !self.ifd_screen_rows.is_empty() {
-                ui.add(egui::TextEdit::singleline(&mut self.ifd_export_csv_buf).desired_width(185.0));
+                ui.add(egui::TextEdit::singleline(&mut self.ifd_export_csv_buf).desired_width(165.0));
+                save_path_row_button(
+                    ui,
+                    &mut self.ifd_export_csv_buf,
+                    "Choose Ensemble Triage CSV Path",
+                    "CSV Table",
+                    &["csv"],
+                );
                 if ui.small_button("Export Triage CSV").clicked() {
                     let p = self.ifd_export_csv_buf.trim().to_string();
                     if let Err(e) =
@@ -25590,7 +26485,14 @@ impl SarAtlasGuiApp {
 
         ui.horizontal_wrapped(|ui| {
             ui.label("CSV:");
-            ui.add(egui::TextEdit::singleline(&mut self.flink_export_csv_buf).desired_width(220.0));
+            ui.add(egui::TextEdit::singleline(&mut self.flink_export_csv_buf).desired_width(195.0));
+            save_path_row_button(
+                ui,
+                &mut self.flink_export_csv_buf,
+                "Choose Super-Additivity CSV Path",
+                "CSV Table",
+                &["csv"],
+            );
             if ui.small_button("Export Super-Additivity CSV").clicked() {
                 let p = self.flink_export_csv_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, export_linked_fragments_csv(&rep)) {
@@ -25601,7 +26503,14 @@ impl SarAtlasGuiApp {
             }
             ui.separator();
             ui.label("3D SDF:");
-            ui.add(egui::TextEdit::singleline(&mut self.flink_export_sdf_buf).desired_width(220.0));
+            ui.add(egui::TextEdit::singleline(&mut self.flink_export_sdf_buf).desired_width(195.0));
+            save_path_row_button(
+                ui,
+                &mut self.flink_export_sdf_buf,
+                "Choose Linked Fragments 3D SDF Path",
+                "MDL SDF",
+                &["sdf"],
+            );
             if ui.small_button("Export Sub-Pocket + Chimeras 3D SDF").clicked() {
                 let p = self.flink_export_sdf_buf.trim().to_string();
                 if let Err(e) = std::fs::write(&p, format_linked_fragments_sdf(&rep)) {
@@ -25804,12 +26713,26 @@ impl SarAtlasGuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.funnel_target_pdb_buf)
                     .hint_text("Optional target .pdb path")
-                    .desired_width(135.0),
+                    .desired_width(120.0),
+            );
+            open_path_row_button(
+                ui,
+                &mut self.funnel_target_pdb_buf,
+                "Browse Funnel Target .pdb",
+                "PDB Structure",
+                &["pdb", "ent"],
             );
             ui.add(
                 egui::TextEdit::singleline(&mut self.funnel_offtarget_pdb_buf)
                     .hint_text("Optional off-target .pdb")
-                    .desired_width(135.0),
+                    .desired_width(120.0),
+            );
+            open_path_row_button(
+                ui,
+                &mut self.funnel_offtarget_pdb_buf,
+                "Browse Funnel Off-Target .pdb",
+                "PDB Structure",
+                &["pdb", "ent"],
             );
         });
 
@@ -25840,27 +26763,35 @@ impl SarAtlasGuiApp {
             ui.label("Promote:");
             ui.add(egui::Slider::new(&mut self.funnel_cfg.final_promote_count, 3..=16));
             ui.separator();
-            if ui.small_button("Save Recipe JSON").clicked() {
-                let p = Path::new(self.funnel_recipe_path_buf.trim());
-                match save_pipeline_recipe_json(p, &self.funnel_cfg) {
-                    Ok(_) => self.status_banner = format!("Saved pipeline recipe -> {}", p.display()),
-                    Err(e) => self.status_banner = format!("Recipe save error: {e}"),
+            if ui.small_button("Save Recipe JSON...").clicked() {
+                let def_name = Path::new(self.funnel_recipe_path_buf.trim())
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("funnel_recipe.json");
+                if let Some(p) = pick_save_file("Save Funnel Recipe (.json)", def_name, "JSON Recipe", &["json"]) {
+                    self.funnel_recipe_path_buf = p.display().to_string();
+                    match save_pipeline_recipe_json(&p, &self.funnel_cfg) {
+                        Ok(_) => self.status_banner = format!("Saved pipeline recipe -> {}", p.display()),
+                        Err(e) => self.status_banner = format!("Recipe save error: {e}"),
+                    }
                 }
             }
-            if ui.small_button("Load Recipe JSON").clicked() {
-                let p = Path::new(self.funnel_recipe_path_buf.trim());
-                match load_pipeline_recipe_json(p) {
-                    Ok(loaded) => {
-                        self.funnel_target_pdb_buf =
-                            loaded.custom_target_pdb_path.clone().unwrap_or_default();
-                        self.funnel_offtarget_pdb_buf =
-                            loaded.custom_offtarget_pdb_path.clone().unwrap_or_default();
-                        self.funnel_custom_smiles_buf = loaded.custom_input_smiles.join(", ");
-                        self.funnel_cfg = loaded;
-                        self.status_banner = format!("Loaded pipeline recipe <- {}", p.display());
-                        trigger_run = true;
+            if ui.small_button("Load Recipe JSON...").clicked() {
+                if let Some(p) = pick_open_file("Load Funnel Recipe (.json)", "JSON Recipe", &["json"]) {
+                    self.funnel_recipe_path_buf = p.display().to_string();
+                    match load_pipeline_recipe_json(&p) {
+                        Ok(loaded) => {
+                            self.funnel_target_pdb_buf =
+                                loaded.custom_target_pdb_path.clone().unwrap_or_default();
+                            self.funnel_offtarget_pdb_buf =
+                                loaded.custom_offtarget_pdb_path.clone().unwrap_or_default();
+                            self.funnel_custom_smiles_buf = loaded.custom_input_smiles.join(", ");
+                            self.funnel_cfg = loaded;
+                            self.status_banner = format!("Loaded pipeline recipe <- {}", p.display());
+                            trigger_run = true;
+                        }
+                        Err(e) => self.status_banner = format!("Recipe load error: {e}"),
                     }
-                    Err(e) => self.status_banner = format!("Recipe load error: {e}"),
                 }
             }
             if ui.small_button("Log -> SQLite").clicked() {
@@ -25868,31 +26799,55 @@ impl SarAtlasGuiApp {
                     let db_p = Path::new(self.funnel_ledger_db_buf.trim());
                     match append_pipeline_run_sqlite(db_p, rep) {
                         Ok(rid) => {
-                            self.funnel_ledger_rows =
-                                load_pipeline_ledger_sqlite(db_p).unwrap_or_default();
+                            match load_pipeline_ledger_sqlite(db_p) {
+                                Ok(rows) => {
+                                    self.funnel_ledger_rows = rows;
+                                    self.status_banner = format!(
+                                        "Logged pipeline run #{rid} into SQLite ledger {}",
+                                        db_p.display()
+                                    );
+                                }
+                                Err(e) => {
+                                    self.status_banner = format!(
+                                        "Logged run #{rid}, but ledger reload failed: {e}"
+                                    );
+                                }
+                            }
                             self.funnel_bottom_subtab = 2;
-                            self.status_banner = format!(
-                                "Logged pipeline run #{rid} into SQLite ledger {}",
-                                db_p.display()
-                            );
                         }
                         Err(e) => self.status_banner = format!("SQLite ledger error: {e}"),
                     }
                 }
             }
-            if ui.small_button("Export CSV").clicked() {
+            if ui.small_button("Export CSV...").clicked() {
                 if let Some(ref rep) = self.funnel_report {
-                    let out = self.funnel_export_cands_buf.trim().to_string();
-                    let csv = export_funnel_candidates_csv(rep, self.funnel_promoted_only);
-                    let _ = std::fs::write(&out, csv);
-                    self.status_banner = format!("Exported funnel candidates CSV -> {out}");
+                    let def_name = Path::new(self.funnel_export_cands_buf.trim())
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("funnel_candidates.csv");
+                    if let Some(out) = pick_save_file("Export Funnel Candidates (.csv)", def_name, "CSV Table", &["csv"]) {
+                        self.funnel_export_cands_buf = out.display().to_string();
+                        let csv = export_funnel_candidates_csv(rep, self.funnel_promoted_only);
+                        match std::fs::write(&out, csv) {
+                            Ok(()) => self.status_banner = format!("Exported funnel candidates CSV -> {}", out.display()),
+                            Err(e) => self.status_banner = format!("Funnel CSV write error: {e}"),
+                        }
+                    }
                 }
             }
-            if ui.small_button("Export SDF").clicked() {
+            if ui.small_button("Export SDF...").clicked() {
                 if let Some(ref rep) = self.funnel_report {
-                    let out = self.funnel_export_sdf_buf.trim().to_string();
-                    let _ = std::fs::write(&out, format_promoted_survivors_sdf(rep));
-                    self.status_banner = format!("Exported promoted 3D poses SDF -> {out}");
+                    let def_name = Path::new(self.funnel_export_sdf_buf.trim())
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("funnel_promoted_survivors.sdf");
+                    if let Some(out) = pick_save_file("Export Promoted 3D Poses (.sdf)", def_name, "MDL SDF", &["sdf"]) {
+                        self.funnel_export_sdf_buf = out.display().to_string();
+                        match std::fs::write(&out, format_promoted_survivors_sdf(rep)) {
+                            Ok(()) => self.status_banner = format!("Exported promoted 3D poses SDF -> {}", out.display()),
+                            Err(e) => self.status_banner = format!("Funnel SDF write error: {e}"),
+                        }
+                    }
                 }
             }
         });
@@ -26095,7 +27050,14 @@ impl SarAtlasGuiApp {
                 .clicked()
             {
                 let db_p = Path::new(self.funnel_ledger_db_buf.trim());
-                self.funnel_ledger_rows = load_pipeline_ledger_sqlite(db_p).unwrap_or_default();
+                if db_p.exists() {
+                    match load_pipeline_ledger_sqlite(db_p) {
+                        Ok(rows) => self.funnel_ledger_rows = rows,
+                        Err(e) => self.status_banner = format!("SQLite ledger read error: {e}"),
+                    }
+                } else {
+                    self.funnel_ledger_rows.clear();
+                }
                 self.funnel_bottom_subtab = 2;
             }
             if self.funnel_bottom_subtab == 0 {
@@ -26254,12 +27216,33 @@ impl SarAtlasGuiApp {
                         ui.label("SQLite Ledger Path:");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.funnel_ledger_db_buf)
-                                .desired_width(240.0),
+                                .desired_width(220.0),
                         );
+                        if open_path_row_button(
+                            ui,
+                            &mut self.funnel_ledger_db_buf,
+                            "Browse SQLite Run Ledger",
+                            "SQLite Database",
+                            &["sqlite", "sqlite3", "db"],
+                        ) {
+                            let db_p = Path::new(self.funnel_ledger_db_buf.trim());
+                            match load_pipeline_ledger_sqlite(db_p) {
+                                Ok(rows) => {
+                                    self.funnel_ledger_rows = rows;
+                                    self.status_banner = format!("Loaded {} ledger runs.", self.funnel_ledger_rows.len());
+                                }
+                                Err(e) => self.status_banner = format!("SQLite ledger read error: {e}"),
+                            }
+                        }
                         if ui.small_button("Refresh Ledger").clicked() {
                             let db_p = Path::new(self.funnel_ledger_db_buf.trim());
-                            self.funnel_ledger_rows =
-                                load_pipeline_ledger_sqlite(db_p).unwrap_or_default();
+                            match load_pipeline_ledger_sqlite(db_p) {
+                                Ok(rows) => {
+                                    self.funnel_ledger_rows = rows;
+                                    self.status_banner = format!("Refreshed {} ledger runs.", self.funnel_ledger_rows.len());
+                                }
+                                Err(e) => self.status_banner = format!("SQLite ledger read error: {e}"),
+                            }
                         }
                     });
                     if self.funnel_ledger_rows.is_empty() {
@@ -27567,11 +28550,11 @@ fn paint_rbfe_lambda_and_parity_panel(
     );
 
     // Right Half: Reconciled dG_MLE vs Experimental dG_exp Parity (kcal/mol)
-    let side = (rect.height() - 42.0)
-        .min(rect.width() * 0.42)
+    let side = (rect.height() - 48.0)
+        .min(rect.width() * 0.40)
         .max(55.0);
     let par = Rect::from_min_size(
-        Pos2::new(rect.right() - side - 14.0, rect.top() + 22.0),
+        Pos2::new(rect.right() - side - 12.0, rect.top() + 20.0),
         Vec2::splat(side),
     );
     painter.rect_stroke(
@@ -27581,34 +28564,36 @@ fn paint_rbfe_lambda_and_parity_panel(
         egui::StrokeKind::Inside,
     );
 
-    let g_min = -12.8_f32;
-    let g_max = -8.2_f32;
+    let (g_min, g_max) = compute_rbfe_parity_bounds(&rep.nodes);
+    let span = (g_max - g_min).max(1.0);
     let px = |v: f64| -> f32 {
-        par.left() + (((v as f32) - g_min) / (g_max - g_min)).clamp(0.0, 1.0) * par.width()
+        par.left() + (((v as f32) - g_min) / span) * par.width()
     };
     let py = |v: f64| -> f32 {
-        par.bottom() - (((v as f32) - g_min) / (g_max - g_min)).clamp(0.0, 1.0) * par.height()
+        par.bottom() - (((v as f32) - g_min) / span) * par.height()
     };
 
-    // Diagonal identity + +-1.0 kcal/mol chemical accuracy lines
+    // Diagonal identity + clipped +-1.0 kcal/mol chemical accuracy lines
     painter.line_segment(
         [Pos2::new(par.left(), par.bottom()), Pos2::new(par.right(), par.top())],
         Stroke::new(1.2, Color32::from_rgba_unmultiplied(148, 163, 184, 140)),
     );
-    painter.line_segment(
-        [
-            Pos2::new(px((g_min + 1.0) as f64), py(g_min as f64)),
-            Pos2::new(px(g_max as f64), py((g_max - 1.0) as f64)),
-        ],
-        Stroke::new(0.9, Color32::from_rgba_unmultiplied(52, 211, 153, 80)),
-    );
-    painter.line_segment(
-        [
-            Pos2::new(px(g_min as f64), py((g_min + 1.0) as f64)),
-            Pos2::new(px((g_max - 1.0) as f64), py(g_max as f64)),
-        ],
-        Stroke::new(0.9, Color32::from_rgba_unmultiplied(52, 211, 153, 80)),
-    );
+    if span > 1.05 {
+        painter.line_segment(
+            [
+                Pos2::new(px((g_min + 1.0) as f64), py(g_min as f64)),
+                Pos2::new(px(g_max as f64), py((g_max - 1.0) as f64)),
+            ],
+            Stroke::new(0.9, Color32::from_rgba_unmultiplied(52, 211, 153, 85)),
+        );
+        painter.line_segment(
+            [
+                Pos2::new(px(g_min as f64), py((g_min + 1.0) as f64)),
+                Pos2::new(px((g_max - 1.0) as f64), py(g_max as f64)),
+            ],
+            Stroke::new(0.9, Color32::from_rgba_unmultiplied(52, 211, 153, 85)),
+        );
+    }
 
     for nd in &rep.nodes {
         if let Some(g_exp) = nd.experimental_dg_kcal {
@@ -27629,6 +28614,36 @@ fn paint_rbfe_lambda_and_parity_panel(
         }
     }
 
+    // X-axis and Y-axis numeric min / mid / max ticks
+    let g_mid = 0.5 * (g_min + g_max);
+    let tick_col = Color32::from_rgb(148, 163, 184);
+    for (frac, val) in [(0.0_f32, g_min), (0.5, g_mid), (1.0, g_max)] {
+        let tx = par.left() + frac * par.width();
+        let ty = par.bottom() - frac * par.height();
+        painter.line_segment(
+            [Pos2::new(tx, par.bottom()), Pos2::new(tx, par.bottom() + 3.0)],
+            Stroke::new(1.0, tick_col),
+        );
+        painter.text(
+            Pos2::new(tx, par.bottom() + 10.0),
+            egui::Align2::CENTER_CENTER,
+            format!("{val:.1}"),
+            egui::FontId::monospace(7.8),
+            tick_col,
+        );
+        painter.line_segment(
+            [Pos2::new(par.left() - 3.0, ty), Pos2::new(par.left(), ty)],
+            Stroke::new(1.0, tick_col),
+        );
+        painter.text(
+            Pos2::new(par.left() - 5.0, ty),
+            egui::Align2::RIGHT_CENTER,
+            format!("{val:.1}"),
+            egui::FontId::monospace(7.8),
+            tick_col,
+        );
+    }
+
     painter.text(
         Pos2::new(par.center().x, rect.top() + 9.0),
         egui::Align2::CENTER_CENTER,
@@ -27636,6 +28651,34 @@ fn paint_rbfe_lambda_and_parity_panel(
         egui::FontId::monospace(8.5),
         Color32::from_rgb(52, 211, 153),
     );
+    painter.text(
+        Pos2::new(par.center().x, rect.bottom() - 7.0),
+        egui::Align2::CENTER_CENTER,
+        "dG_exp (kcal/mol)",
+        egui::FontId::monospace(7.5),
+        tick_col,
+    );
+}
+
+fn compute_rbfe_parity_bounds(nodes: &[sar_core::RbfeLigandNode]) -> (f32, f32) {
+    let mut data_min = f32::INFINITY;
+    let mut data_max = f32::NEG_INFINITY;
+    for nd in nodes {
+        if let Some(g_exp) = nd.experimental_dg_kcal {
+            let gx = g_exp as f32;
+            let gy = nd.mle_dg_bind_kcal as f32;
+            let se = nd.mle_dg_std_kcal as f32;
+            data_min = data_min.min(gx).min(gy - se);
+            data_max = data_max.max(gx).max(gy + se);
+        }
+    }
+    if data_min.is_finite() && data_max.is_finite() {
+        let span = (data_max - data_min).max(1.0);
+        let pad = (span * 0.10).max(0.4);
+        (data_min - pad, data_max + pad)
+    } else {
+        (-13.0_f32, -7.0_f32)
+    }
 }
 
 fn paint_torsion_1d_energy_profile(
@@ -28119,6 +29162,8 @@ pub fn run_screenshot(
             regimen: app.pbpk_regimen,
             prandial: app.pbpk_prandial,
             inhibit_bbb_efflux: app.pbpk_inhibit_bbb_efflux,
+            cyp3a4_km_um: app.pbpk_km_override_enabled.then_some(app.pbpk_km_um as f64),
+            ..PbpkDosingConfig::default()
         };
         app.pbpk_report = Some(simulate_oral_pbpk(mol, cfg));
     }
@@ -28270,60 +29315,22 @@ fn write_rgba_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) 
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
         }
     }
-    fn crc32(bytes: &[u8]) -> u32 {
-        let mut c = !0u32;
-        for &b in bytes {
-            c ^= u32::from(b);
-            for _ in 0..8 {
-                c = (c >> 1) ^ (0xEDB8_8320 & (0u32.wrapping_sub(c & 1)));
-            }
-        }
-        !c
-    }
-    fn push_chunk(out: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
-        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        let start = out.len();
-        out.extend_from_slice(tag);
-        out.extend_from_slice(data);
-        out.extend_from_slice(&crc32(&out[start..]).to_be_bytes());
-    }
-    let row_bytes = (width as usize) * 4;
-    let mut raw = Vec::with_capacity((row_bytes + 1) * (height as usize));
-    for row in rgba.chunks_exact(row_bytes) {
-        raw.push(0);
-        raw.extend_from_slice(row);
-    }
-    let (mut s1, mut s2) = (1u32, 0u32);
-    for &b in &raw {
-        s1 = (s1 + u32::from(b)) % 65521;
-        s2 = (s2 + s1) % 65521;
-    }
-    let mut zlib = Vec::with_capacity(raw.len() + 64);
-    zlib.extend_from_slice(&[0x78, 0x01]);
-    let mut off = 0usize;
-    while off < raw.len() {
-        let end = (off + u16::MAX as usize).min(raw.len());
-        let block = &raw[off..end];
-        let len = block.len() as u16;
-        zlib.push(u8::from(end == raw.len()));
-        zlib.extend_from_slice(&len.to_le_bytes());
-        zlib.extend_from_slice(&(!len).to_le_bytes());
-        zlib.extend_from_slice(block);
-        off = end;
-    }
-    zlib.extend_from_slice(&((s2 << 16) | s1).to_be_bytes());
-
-    let mut png = Vec::with_capacity(zlib.len() + 64);
-    png.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
-    let mut ihdr = [0u8; 13];
-    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
-    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
-    ihdr[8] = 8;
-    ihdr[9] = 6;
-    push_chunk(&mut png, b"IHDR", &ihdr);
-    push_chunk(&mut png, b"IDAT", &zlib);
-    push_chunk(&mut png, b"IEND", &[]);
-    std::fs::write(path, &png).map_err(|e| format!("Failed writing PNG '{}': {e}", path.display()))
+    let file = std::fs::File::create(path)
+        .map_err(|e| format!("Failed creating PNG '{}': {e}", path.display()))?;
+    let mut writer = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(&mut writer, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::High);
+    let mut png_writer = encoder
+        .write_header()
+        .map_err(|e| format!("PNG header write failed: {e}"))?;
+    png_writer
+        .write_image_data(rgba)
+        .map_err(|e| format!("PNG image write failed: {e}"))?;
+    png_writer
+        .finish()
+        .map_err(|e| format!("PNG finalize failed: {e}"))
 }
 
 #[cfg(test)]
@@ -28462,5 +29469,53 @@ mod tests {
         app.switch_campaign("All");
         assert_eq!(app.campaign_workspace.preset, CampaignSeriesPreset::AllLoaded);
         assert_eq!(app.pbpk_dataset_rows.len(), app.ds.mols.len());
+    }
+
+    #[test]
+    fn fit_camera_to_visible_centers_and_zooms_active_target_series() {
+        let ds = DatasetAnalysis::from_molecules(load_benchmark_26(), 0.30, 6.0);
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx);
+        let mut app = SarAtlasApp::new(&cc, ds);
+
+        assert!(app.camera_autofit_pending);
+        app.fit_camera_to_visible(1.6);
+        let egfr_pan = app.pan;
+        let egfr_zoom = app.zoom;
+        assert!(egfr_zoom > 0.95, "Expected zoomed fit for EGFR cluster, got {egfr_zoom}");
+        assert!(egfr_pan[0].abs() > 1.0 || egfr_pan[1].abs() > 1.0);
+
+        app.switch_campaign("Dopamine D2");
+        assert!(app.camera_autofit_pending);
+        app.fit_camera_to_visible(1.6);
+        let drd2_pan = app.pan;
+        assert!(
+            (drd2_pan[0] - egfr_pan[0]).abs() > 5.0 || (drd2_pan[1] - egfr_pan[1]).abs() > 5.0,
+            "Expected distinct camera center when switching EGFR -> Dopamine D2"
+        );
+    }
+
+    #[test]
+    fn rbfe_parity_bounds_dynamically_encompasses_egfr_and_custom_ranges() {
+        let ds = DatasetAnalysis::from_molecules(load_benchmark_26(), 0.30, 6.0);
+        let egfr_only: Vec<_> = ds
+            .mols
+            .iter()
+            .filter(|m| m.target == "EGFR")
+            .cloned()
+            .collect();
+        let egfr_ds = DatasetAnalysis::from_molecules(egfr_only, 0.30, 6.0);
+        let rep = run_rbfe_network_campaign(&egfr_ds, &RbfeNetworkConfig::default());
+        let (g_min, g_max) = compute_rbfe_parity_bounds(&rep.nodes);
+        assert!(
+            g_min < -15.3,
+            "Dynamic parity g_min ({g_min}) must encompass EGFR BRIDGES-56 (-15.30 kcal/mol)"
+        );
+        assert!(
+            g_max > -8.6,
+            "Dynamic parity g_max ({g_max}) must encompass Vandetanib (-8.59 kcal/mol)"
+        );
+        let (def_min, def_max) = compute_rbfe_parity_bounds(&[]);
+        assert!(def_min < def_max);
     }
 }

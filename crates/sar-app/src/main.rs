@@ -23,9 +23,26 @@
 //! micro-`pKa`/protomers, 3D `MMFF-lite` + `USR`/`ROCS` overlay, covalent warhead `GSH` tuning,
 //! `PROTAC` (`CRBN`/`VHL`) `bRo5` chameleonicity, `ChEMBL`/`PubChem` REST, `SQLite 3`, and `MCS`.
 
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod gui;
 mod tui;
 mod wgpu_pass;
+
+#[cfg(windows)]
+fn attach_parent_console_if_cli() {
+    if std::env::args_os().len() > 1 {
+        const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+        extern "system" {
+            fn AttachConsole(dw_process_id: u32) -> i32;
+        }
+        // SAFETY: Win32 AttachConsole with constant sentinel ATTACH_PARENT_PROCESS ((DWORD)-1);
+        // return value is ignored when launched without an interactive parent console.
+        unsafe {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
 
 use clap::{Parser, Subcommand, ValueEnum};
 use sar_core::{
@@ -513,8 +530,8 @@ enum Commands {
     /// Build a `Lomap` `MCS` alchemical perturbation graph, run multi-`lambda` 2-leg (`Complex` vs `Solvent`) `Zwanzig`/`Bennett BAR` `RBFE`, audit `3`-/`4`-cycle closure hysteresis, and solve variance-weighted `MLE` node affinities.
     #[command(alias = "lomap")]
     Rbfe {
-        /// Congeneric series preset: `egfr` (`1M17`), `cox2` (`3LN1`), `drd2` (`6CM4`), or `auto`.
-        #[arg(long, default_value = "egfr")]
+        /// Congeneric series preset: `auto` (dataset dominant target, default), `egfr` (`1M17`), `cox2` (`3LN1`), or `drd2` (`6CM4`).
+        #[arg(long, default_value = "auto")]
         series: String,
         /// Network topology: `lomap` (Cycle-Closed `MST` + Chords), `star` (Radial Hub), or `dense`.
         #[arg(long, default_value = "lomap")]
@@ -1279,6 +1296,9 @@ fn load_dataset_or_project(
 }
 
 fn main() {
+    #[cfg(windows)]
+    attach_parent_console_if_cli();
+
     let cli = Cli::parse();
 
     if let Some(out_path) = cli.screenshot {
@@ -2648,12 +2668,7 @@ Co-Crystallized Ligands Extracted:");
             export_nodes_csv,
         } => {
             let t0 = Instant::now();
-            let series_preset = match series.to_ascii_lowercase().as_str() {
-                "auto" | "dataset" => RbfeSeriesPreset::AutoDominantTarget,
-                "cox" | "cox2" | "cox-2" | "3ln1" => RbfeSeriesPreset::Cox23ln1Diarylpyrazoles,
-                "drd2" | "d2" | "6cm4" => RbfeSeriesPreset::Drd26cm4Arylpiperazines,
-                _ => RbfeSeriesPreset::Egfr1m17Quinazolines,
-            };
+            let series_preset = parse_rbfe_series_preset(&series);
             let topology_mode = match topology.to_ascii_lowercase().as_str() {
                 "star" | "radial" | "hub" => RbfeTopologyMode::StarRadialHub,
                 "dense" | "redundant" => RbfeTopologyMode::DenseRedundantLomap,
@@ -3677,6 +3692,7 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                     PrandialState::Fasted
                 },
                 inhibit_bbb_efflux: inhibit_efflux,
+                ..PbpkDosingConfig::default()
             };
 
             if smiles.is_some() || id.is_some() {
@@ -3867,6 +3883,7 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                     PrandialState::Fasted
                 },
                 inhibit_bbb_efflux: inhibit_efflux,
+                ..PbpkDosingConfig::default()
             };
 
             if smiles.is_some() || id.is_some() {
@@ -3912,11 +3929,20 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                     rep.target_ic50_nm
                 );
                 println!(
-                    "First-Pass F_oral: {:.1}%  [Fa(ACAT) = {:.1}% x Fg(Q_gut) = {:.1}% x Fh(Liver) = {:.1}%]",
+                    "First-Pass F_oral: {:.1}% (90% CI [{:.1}%, {:.1}%], n={}) [Fa = {:.1}% x Fg = {:.1}% x Fh = {:.1}%]",
                     rep.f_oral_pct,
+                    rep.f_oral_ci90[0],
+                    rep.f_oral_ci90[1],
+                    rep.virtual_pop_n,
                     rep.fa_integrated * 100.0,
                     rep.fg_gut_wall * 100.0,
                     rep.fh_hepatic * 100.0
+                );
+                println!(
+                    "CYP3A4 Kinetics  : Km = {:.2} uM | Vmax = {:.1} umol/h | Peak Saturation = {:.1}%",
+                    rep.cyp3a4_km_um,
+                    rep.cyp3a4_vmax_umol_hr,
+                    rep.cyp3a4_peak_saturation_pct
                 );
                 println!(
                     "Distribution     : Vss = {:.2} L/kg ({:.1} L) | fu,p = {:.4} | R_bp = {:.2} | t1/2 = {:.1} h",
@@ -3935,12 +3961,16 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                     rep.bbb_efflux_ratio
                 );
                 println!(
-                    "Exposure & RO%   : Cu,p Cmax = {:.1} nM @ {:.2}h (T>IC50 {:.1}h, RO {:.0}%) | Cu,br Cmax = {:.1} nM @ {:.2}h (T>IC50 {:.1}h, Brain RO {:.0}%)",
+                    "Exposure & RO%   : Cu,p Cmax = {:.1} nM (90% CI [{:.1}, {:.1}]) @ {:.2}h (T>IC50 {:.1}h, RO {:.0}%) | Cu,br Cmax = {:.1} nM (90% CI [{:.1}, {:.1}]) @ {:.2}h (T>IC50 {:.1}h, Brain RO {:.0}%)",
                     rep.cmax_unbound_plasma_nm,
+                    rep.cmax_u_plasma_ci90_nm[0],
+                    rep.cmax_u_plasma_ci90_nm[1],
                     rep.tmax_plasma_hr,
                     rep.time_above_ic50_plasma_hr,
                     rep.peak_ro_plasma_pct,
                     rep.cmax_unbound_brain_nm,
+                    rep.cmax_u_brain_ci90_nm[0],
+                    rep.cmax_u_brain_ci90_nm[1],
                     rep.tmax_brain_hr,
                     rep.time_above_ic50_brain_hr,
                     rep.peak_ro_brain_pct
@@ -6055,5 +6085,334 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                 dt_gpu.as_secs_f64() * 1000.0
             );
         }
+    }
+}
+
+fn parse_rbfe_series_preset(series: &str) -> RbfeSeriesPreset {
+    match series.to_ascii_lowercase().as_str() {
+        "auto" | "dataset" => RbfeSeriesPreset::AutoDominantTarget,
+        "cox" | "cox2" | "cox-2" | "3ln1" => RbfeSeriesPreset::Cox23ln1Diarylpyrazoles,
+        "drd2" | "d2" | "6cm4" => RbfeSeriesPreset::Drd26cm4Arylpiperazines,
+        "egfr" | "1m17" => RbfeSeriesPreset::Egfr1m17Quinazolines,
+        _ => RbfeSeriesPreset::AutoDominantTarget,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use sar_core::parse_sdf_dataset;
+
+    #[test]
+    fn cli_rbfe_defaults_series_to_auto_and_parses_explicit_presets() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let cli_default =
+                    Cli::try_parse_from(["sar-atlas", "rbfe", "--input", "custom_4.sdf"])
+                        .expect("rbfe CLI parse must succeed");
+                match cli_default.command {
+                    Some(Commands::Rbfe { series, input, .. }) => {
+                        assert_eq!(series, "auto");
+                        assert_eq!(input.as_deref(), Some(std::path::Path::new("custom_4.sdf")));
+                        assert_eq!(
+                            parse_rbfe_series_preset(&series),
+                            RbfeSeriesPreset::AutoDominantTarget
+                        );
+                    }
+                    other => panic!("Expected Commands::Rbfe, got {:?}", other.is_some()),
+                }
+
+                assert_eq!(
+                    parse_rbfe_series_preset("egfr"),
+                    RbfeSeriesPreset::Egfr1m17Quinazolines
+                );
+                assert_eq!(
+                    parse_rbfe_series_preset("drd2"),
+                    RbfeSeriesPreset::Drd26cm4Arylpiperazines
+                );
+                assert_eq!(
+                    parse_rbfe_series_preset("cox2"),
+                    RbfeSeriesPreset::Cox23ln1Diarylpyrazoles
+                );
+                assert_eq!(
+                    parse_rbfe_series_preset("auto"),
+                    RbfeSeriesPreset::AutoDominantTarget
+                );
+            })
+            .expect("spawn CLI test thread")
+            .join()
+            .expect("CLI test thread panicked");
+    }
+
+    #[test]
+    fn cli_rbfe_default_preserves_custom_4_compound_sdf_without_benchmark_injection() {
+        let custom_4_sdf = "\
+ANA-1
+  sar-atlas  2D
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 18 20 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0.0 0.0 0.0 0
+M  V30 2 C 1.2 0.0 0.0 0
+M  V30 3 C 1.8 1.0 0.0 0
+M  V30 4 C 1.2 2.1 0.0 0
+M  V30 5 C 0.0 2.1 0.0 0
+M  V30 6 C -0.6 1.0 0.0 0
+M  V30 7 N 2.4 3.1 0.0 0
+M  V30 8 C 3.6 3.1 0.0 0
+M  V30 9 C 4.2 4.1 0.0 0
+M  V30 10 C 3.6 5.2 0.0 0
+M  V30 11 N 2.4 5.2 0.0 0
+M  V30 12 C 1.8 4.1 0.0 0
+M  V30 13 N 4.2 2.1 0.0 0
+M  V30 14 C 5.4 2.1 0.0 0
+M  V30 15 C 6.0 3.1 0.0 0
+M  V30 16 C 5.4 4.1 0.0 0
+M  V30 17 C 0.0 -1.2 0.0 0
+M  V30 18 O -1.0 -1.8 0.0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 4 1 2
+M  V30 2 4 2 3
+M  V30 3 4 3 4
+M  V30 4 4 4 5
+M  V30 5 4 5 6
+M  V30 6 4 6 1
+M  V30 7 1 4 7
+M  V30 8 4 7 8
+M  V30 9 4 8 9
+M  V30 10 4 9 10
+M  V30 11 4 10 11
+M  V30 12 4 11 12
+M  V30 13 4 12 7
+M  V30 14 4 8 13
+M  V30 15 4 13 14
+M  V30 16 4 14 15
+M  V30 17 4 15 16
+M  V30 18 4 16 9
+M  V30 19 1 1 18
+M  V30 20 1 18 17
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+> <ID>
+ANA-1
+
+> <TARGET>
+EGFR
+
+> <PACT>
+7.10
+
+$$$$
+ANA-2
+  sar-atlas  2D
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 17 19 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0.0 0.0 0.0 0
+M  V30 2 C 1.2 0.0 0.0 0
+M  V30 3 C 1.8 1.0 0.0 0
+M  V30 4 C 1.2 2.1 0.0 0
+M  V30 5 C 0.0 2.1 0.0 0
+M  V30 6 C -0.6 1.0 0.0 0
+M  V30 7 N 2.4 3.1 0.0 0
+M  V30 8 C 3.6 3.1 0.0 0
+M  V30 9 C 4.2 4.1 0.0 0
+M  V30 10 C 3.6 5.2 0.0 0
+M  V30 11 N 2.4 5.2 0.0 0
+M  V30 12 C 1.8 4.1 0.0 0
+M  V30 13 N 4.2 2.1 0.0 0
+M  V30 14 C 5.4 2.1 0.0 0
+M  V30 15 C 6.0 3.1 0.0 0
+M  V30 16 C 5.4 4.1 0.0 0
+M  V30 17 F 0.0 -1.2 0.0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 4 1 2
+M  V30 2 4 2 3
+M  V30 3 4 3 4
+M  V30 4 4 4 5
+M  V30 5 4 5 6
+M  V30 6 4 6 1
+M  V30 7 1 4 7
+M  V30 8 4 7 8
+M  V30 9 4 8 9
+M  V30 10 4 9 10
+M  V30 11 4 10 11
+M  V30 12 4 11 12
+M  V30 13 4 12 7
+M  V30 14 4 8 13
+M  V30 15 4 13 14
+M  V30 16 4 14 15
+M  V30 17 4 15 16
+M  V30 18 4 16 9
+M  V30 19 1 1 17
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+> <ID>
+ANA-2
+
+> <TARGET>
+EGFR
+
+> <PACT>
+7.80
+
+$$$$
+ANA-3
+  sar-atlas  2D
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 17 19 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0.0 0.0 0.0 0
+M  V30 2 C 1.2 0.0 0.0 0
+M  V30 3 C 1.8 1.0 0.0 0
+M  V30 4 C 1.2 2.1 0.0 0
+M  V30 5 C 0.0 2.1 0.0 0
+M  V30 6 C -0.6 1.0 0.0 0
+M  V30 7 N 2.4 3.1 0.0 0
+M  V30 8 C 3.6 3.1 0.0 0
+M  V30 9 C 4.2 4.1 0.0 0
+M  V30 10 C 3.6 5.2 0.0 0
+M  V30 11 N 2.4 5.2 0.0 0
+M  V30 12 C 1.8 4.1 0.0 0
+M  V30 13 N 4.2 2.1 0.0 0
+M  V30 14 C 5.4 2.1 0.0 0
+M  V30 15 C 6.0 3.1 0.0 0
+M  V30 16 C 5.4 4.1 0.0 0
+M  V30 17 Cl 0.0 -1.2 0.0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 4 1 2
+M  V30 2 4 2 3
+M  V30 3 4 3 4
+M  V30 4 4 4 5
+M  V30 5 4 5 6
+M  V30 6 4 6 1
+M  V30 7 1 4 7
+M  V30 8 4 7 8
+M  V30 9 4 8 9
+M  V30 10 4 9 10
+M  V30 11 4 10 11
+M  V30 12 4 11 12
+M  V30 13 4 12 7
+M  V30 14 4 8 13
+M  V30 15 4 13 14
+M  V30 16 4 14 15
+M  V30 17 4 15 16
+M  V30 18 4 16 9
+M  V30 19 1 1 17
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+> <ID>
+ANA-3
+
+> <TARGET>
+EGFR
+
+> <PACT>
+8.10
+
+$$$$
+ANA-4
+  sar-atlas  2D
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 17 19 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0.0 0.0 0.0 0
+M  V30 2 C 1.2 0.0 0.0 0
+M  V30 3 C 1.8 1.0 0.0 0
+M  V30 4 C 1.2 2.1 0.0 0
+M  V30 5 C 0.0 2.1 0.0 0
+M  V30 6 C -0.6 1.0 0.0 0
+M  V30 7 N 2.4 3.1 0.0 0
+M  V30 8 C 3.6 3.1 0.0 0
+M  V30 9 C 4.2 4.1 0.0 0
+M  V30 10 C 3.6 5.2 0.0 0
+M  V30 11 N 2.4 5.2 0.0 0
+M  V30 12 C 1.8 4.1 0.0 0
+M  V30 13 N 4.2 2.1 0.0 0
+M  V30 14 C 5.4 2.1 0.0 0
+M  V30 15 C 6.0 3.1 0.0 0
+M  V30 16 C 5.4 4.1 0.0 0
+M  V30 17 Br 0.0 -1.2 0.0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 4 1 2
+M  V30 2 4 2 3
+M  V30 3 4 3 4
+M  V30 4 4 4 5
+M  V30 5 4 5 6
+M  V30 6 4 6 1
+M  V30 7 1 4 7
+M  V30 8 4 7 8
+M  V30 9 4 8 9
+M  V30 10 4 9 10
+M  V30 11 4 10 11
+M  V30 12 4 11 12
+M  V30 13 4 12 7
+M  V30 14 4 8 13
+M  V30 15 4 13 14
+M  V30 16 4 14 15
+M  V30 17 4 15 16
+M  V30 18 4 16 9
+M  V30 19 1 1 17
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+> <ID>
+ANA-4
+
+> <TARGET>
+EGFR
+
+> <PACT>
+8.45
+
+$$$$
+";
+        let series_arg = std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let cli = Cli::try_parse_from(["sar-atlas", "rbfe", "--input", "custom_4.sdf"])
+                    .expect("CLI parse must succeed");
+                match cli.command {
+                    Some(Commands::Rbfe { series, .. }) => series,
+                    _ => panic!("Expected Commands::Rbfe"),
+                }
+            })
+            .expect("spawn CLI parse thread")
+            .join()
+            .expect("CLI parse thread panicked");
+        let preset = parse_rbfe_series_preset(&series_arg);
+        assert_eq!(preset, RbfeSeriesPreset::AutoDominantTarget);
+
+        let mols = parse_sdf_dataset(custom_4_sdf).expect("V3000 SDF must parse");
+        assert_eq!(mols.len(), 4);
+        let ds = DatasetAnalysis::from_molecules(mols, 0.30, 6.0);
+        let cfg = RbfeNetworkConfig {
+            series_preset: preset,
+            ..RbfeNetworkConfig::default()
+        };
+        let rep = run_rbfe_network_campaign(&ds, &cfg);
+        assert_eq!(rep.nodes.len(), 4);
+        assert!(
+            rep.nodes.iter().all(|nd| nd.compound_id.starts_with("ANA-")),
+            "No benchmark analogs may be injected: {:?}",
+            rep.nodes.iter().map(|nd| &nd.compound_id).collect::<Vec<_>>()
+        );
     }
 }

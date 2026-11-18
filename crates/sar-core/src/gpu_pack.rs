@@ -346,7 +346,7 @@ pub fn viridis_rgb(t: f32) -> [f32; 3] {
     }
 }
 
-fn inferno_cliff_rgb(t: f32) -> [f32; 3] {
+pub fn inferno_cliff_rgb(t: f32) -> [f32; 3] {
     let x = t.clamp(0.0, 1.0);
     if x < 0.5 {
         lerp3([0.14, 0.10, 0.32], [0.84, 0.22, 0.38], x * 2.0)

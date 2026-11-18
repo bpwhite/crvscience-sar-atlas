@@ -43,6 +43,7 @@ use crate::cyp_metabolism::analyze_cyp_metabolism;
 use crate::mol::{Element, Molecule};
 use crate::physchem::evaluate_physchem;
 use crate::pka_protomer::{evaluate_physiological_pka_74, ChargeClass74};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// Number of sampled time points along the simulated plasma & brain PK curves.
@@ -160,6 +161,16 @@ pub struct PbpkDosingConfig {
     pub prandial: PrandialState,
     /// Simulates chemical or genetic `MDR1 (P-gp)` + `BCRP` apical BBB efflux inhibition (`ER -> 0`).
     pub inhibit_bbb_efflux: bool,
+    /// Optional explicit CYP3A4 Michaelis-Menten `Km` (`uM`); `None` uses structure-predicted `Km`.
+    #[serde(default)]
+    pub cyp3a4_km_um: Option<f64>,
+    /// Number of deterministic virtual-population subjects for 90% CI (`P5`-`P95`) bands (`0` = deterministic only).
+    #[serde(default = "default_virtual_pop_n")]
+    pub virtual_pop_n: usize,
+}
+
+fn default_virtual_pop_n() -> usize {
+    48
 }
 
 impl Default for PbpkDosingConfig {
@@ -169,6 +180,8 @@ impl Default for PbpkDosingConfig {
             regimen: DosingRegimen::SingleDose24h,
             prandial: PrandialState::Fasted,
             inhibit_bbb_efflux: false,
+            cyp3a4_km_um: None,
+            virtual_pop_n: default_virtual_pop_n(),
         }
     }
 }
@@ -259,6 +272,36 @@ pub struct OralPbpkReport {
     pub ro_brain_pct: [f32; PBPK_TIME_POINTS],
     #[serde(with = "crate::serde_f32_array")]
     pub gi_absorbed_pct: [f32; PBPK_TIME_POINTS],
+
+    // Saturable Michaelis-Menten CYP3A4 Kinetics & Virtual-Population 90% CI (P5-P95)
+    #[serde(default)]
+    pub cyp3a4_km_um: f64,
+    #[serde(default)]
+    pub cyp3a4_vmax_umol_hr: f64,
+    #[serde(default)]
+    pub cyp3a4_peak_saturation_pct: f64,
+    #[serde(default)]
+    pub virtual_pop_n: usize,
+    #[serde(default)]
+    pub f_oral_ci90: [f64; 2],
+    #[serde(default)]
+    pub cmax_u_plasma_ci90_nm: [f64; 2],
+    #[serde(default)]
+    pub cmax_u_brain_ci90_nm: [f64; 2],
+    #[serde(default)]
+    pub auc_u_plasma_ci90_nm_hr: [f64; 2],
+    #[serde(default = "default_pbpk_curve", with = "crate::serde_f32_array")]
+    pub c_unbound_plasma_p05_nm: [f32; PBPK_TIME_POINTS],
+    #[serde(default = "default_pbpk_curve", with = "crate::serde_f32_array")]
+    pub c_unbound_plasma_p95_nm: [f32; PBPK_TIME_POINTS],
+    #[serde(default = "default_pbpk_curve", with = "crate::serde_f32_array")]
+    pub c_unbound_brain_p05_nm: [f32; PBPK_TIME_POINTS],
+    #[serde(default = "default_pbpk_curve", with = "crate::serde_f32_array")]
+    pub c_unbound_brain_p95_nm: [f32; PBPK_TIME_POINTS],
+}
+
+fn default_pbpk_curve() -> [f32; PBPK_TIME_POINTS] {
+    [0.0; PBPK_TIME_POINTS]
 }
 
 /// Dataset-level `50 mg` Single-Dose Oral PBPK & `Kp,uu,brain` summary row.
@@ -554,28 +597,31 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
     });
     let cl_int_u_total_l_hr = (cyp.cl_int_ml_min_kg * HUMAN_BW_KG * 60.0) / 1000.0;
     let ugt_gut_l_hr = if has_phenol { 42.0 } else { 0.0 };
-    let cl_u_gut_l_hr = cl_int_u_total_l_hr * fm_3a4 * 0.055 + ugt_gut_l_hr;
     let fu_gut = (fu_plasma * 2.2).clamp(0.05, 1.0);
-    let fg_gut_wall = (q_gut_l_hr / (q_gut_l_hr + fu_gut * cl_u_gut_l_hr)).clamp(0.08, 0.995);
 
-    // 6. Pang & Rowland (1977) Well-Stirred Hepatic Clearance & First-Pass Availability F_h:
+    // 6. Pang & Rowland (1977) Well-Stirred Hepatic Clearance & Saturable CYP3A4 Michaelis-Menten Km:
     let q_h_blood_l_hr = match config.prandial {
         PrandialState::Fasted => 90.0,
         PrandialState::FedBileMicelles => 112.0, // Postprandial splanchnic hyperemia
     };
-    let fu_blood = (fu_plasma / rbp).clamp(0.002, 1.0);
     let ugt_liver_l_hr = if has_phenol { 95.0 } else { 0.0 };
-    let cl_int_liver_l_hr = cl_int_u_total_l_hr + ugt_liver_l_hr;
-    let cl_hepatic_blood_l_hr =
-        (q_h_blood_l_hr * fu_blood * cl_int_liver_l_hr) / (q_h_blood_l_hr + fu_blood * cl_int_liver_l_hr);
-    let hepatic_extraction_eh = (cl_hepatic_blood_l_hr / q_h_blood_l_hr).clamp(0.01, 0.96);
-    let fh_hepatic = (1.0 - hepatic_extraction_eh).clamp(0.04, 0.99);
+
+    // Structure-predicted human CYP3A4 Km (uM) unless explicitly overridden in config
+    let cyp3a4_km_um = config
+        .cyp3a4_km_um
+        .unwrap_or_else(|| 10f64.powf(1.35 - 0.30 * pka.microstate_logd_74.clamp(-1.0, 4.5)))
+        .clamp(0.5, 80.0);
+    let km_nm = cyp3a4_km_um * 1000.0;
+    let cl_int_3a4_lin = cl_int_u_total_l_hr * fm_3a4;
+    let cl_int_other_lin = cl_int_u_total_l_hr * (1.0 - fm_3a4) + ugt_liver_l_hr;
+    let vmax_liver_3a4_nmol_hr = cl_int_3a4_lin * km_nm;
+    let vmax_gut_3a4_nmol_hr = (cl_int_3a4_lin * 0.055) * km_nm;
+    let cyp3a4_vmax_umol_hr = vmax_liver_3a4_nmol_hr / 1000.0;
 
     // Glomerular filtration + tubular reabsorption renal plasma clearance (GFR = 7.5 L/h):
     let tubular_reabs =
         (1.0 / (1.0 + 10f64.powf(-0.65 * pka.microstate_logd_74))).clamp(0.05, 0.92);
     let cl_renal_plasma_l_hr = (7.5 * fu_plasma * (1.0 - 0.80 * tubular_reabs)).clamp(0.01, 6.5);
-    let cl_sys_plasma_l_hr = cl_hepatic_blood_l_hr * rbp + cl_renal_plasma_l_hr;
 
     // 7. 4th-Order Runge-Kutta (`RK4`) Integration across Stomach + 7 CAT Segments + Central + Periph + Brain ISF:
     let k_ge_hr = match config.prandial {
@@ -593,180 +639,392 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
         PrandialState::FedBileMicelles => 0.095,
     };
 
-    let v_central_l = (4.2 + 0.12 * vss_total_l).clamp(4.2, vss_total_l.max(5.0));
-    let v_periph_l = (vss_total_l - v_central_l).max(2.5);
     let q_periph_l_hr = 46.0;
     let v_brain_isf_l = 1.10; // Human brain water volume
-
-    // State vector Y (len = 20, all in nmol):
-    // [0]: stom_solid, [1]: stom_diss, [2..9]: si_solid[0..7], [9..16]: si_diss[0..7],
-    // [16]: central, [17]: periph, [18]: brain_isf, [19]: cumulative_absorbed_nmol
     let dose_nmol_per_admin = (config.dose_mg.max(0.5) * 1.0e6) / mw;
     let schedule = config.regimen.dose_times_hr();
     let horizon_hr = config.regimen.horizon_hr();
-    let dt = 0.01f64; // 36-second RK4 substep (unconditionally stable for all rates <= 30 h^-1)
-    let total_steps = ((horizon_hr / dt).round() as usize).max(96);
 
-    let mut y = [0.0f64; 20];
-    let mut total_dosed_nmol = 0.0f64;
-    let mut next_dose_ptr = 0usize;
-
-    let rhs = |s: &[f64; 20]| -> [f64; 20] {
-        let mut dy = [0.0f64; 20];
-
-        // Stomach dissolution & gastric emptying into Duodenum (segment 0):
-        let c_stom = (s[1].max(0.0)) / v_stom_l;
-        let sat_frac_stom = (1.0 - c_stom / c_sat_stom_nm).clamp(0.0, 1.0);
-        let j_diss_stom = k_diss_base_hr * s[0].max(0.0) * sat_frac_stom;
-        let j_emp_solid = (k_ge_hr * 0.55) * s[0].max(0.0);
-        let j_emp_diss = k_ge_hr * s[1].max(0.0);
-        dy[0] = -j_diss_stom - j_emp_solid;
-        dy[1] = j_diss_stom - j_emp_diss;
-
-        let mut j_abs_sum = 0.0f64;
-        for seg in 0..7 {
-            let sol_idx = 2 + seg;
-            let dis_idx = 9 + seg;
-            let in_sol = if seg == 0 {
-                j_emp_solid
-            } else {
-                k_transit_hr * s[2 + seg - 1].max(0.0)
-            };
-            let in_dis = if seg == 0 {
-                j_emp_diss
-            } else {
-                k_transit_hr * s[9 + seg - 1].max(0.0)
-            };
-            let c_seg = s[dis_idx].max(0.0) / v_si_seg_l;
-            let sat_frac = (1.0 - c_seg / c_sat_si_nm).clamp(0.0, 1.0);
-            let j_diss = k_diss_base_hr * s[sol_idx].max(0.0) * sat_frac;
-            let out_sol = k_transit_hr * s[sol_idx].max(0.0);
-            let out_dis = k_transit_hr * s[dis_idx].max(0.0);
-            // Regional villous surface area tapers slightly in distal ileum (`seg 5..6`):
-            let reg_mult = if seg <= 3 { 1.08 } else { 0.86 };
-            let j_abs = (ka_seg_hr * reg_mult) * s[dis_idx].max(0.0);
-
-            dy[sol_idx] = in_sol - out_sol - j_diss;
-            dy[dis_idx] = in_dis - out_dis + j_diss - j_abs;
-            j_abs_sum += j_abs;
-        }
-
-        // First-pass gated systemic input + central/peripheral/brain ODEs:
-        let c_p_tot = s[16].max(0.0) / v_central_l;
-        let c_p_unb = fu_plasma * c_p_tot;
-        let c_periph = s[17].max(0.0) / v_periph_l;
-        let c_br_unb = s[18].max(0.0) / v_brain_isf_l;
-
-        let j_sys_in = j_abs_sum * fg_gut_wall * fh_hepatic;
-        let j_elim = cl_sys_plasma_l_hr * c_p_tot;
-        let j_dist = q_periph_l_hr * (c_p_tot - c_periph);
-        let j_bbb_net = ps_bbb_l_hr * c_p_unb - (ps_bbb_l_hr / kp_uu_brain) * c_br_unb;
-
-        dy[16] = j_sys_in - j_elim - j_dist;
-        dy[17] = j_dist;
-        dy[18] = j_bbb_net;
-        dy[19] = j_abs_sum;
-        dy
-    };
-
-    let mut time_hr = [0.0f32; PBPK_TIME_POINTS];
-    let mut c_total_plasma_nm = [0.0f32; PBPK_TIME_POINTS];
-    let mut c_unbound_plasma_nm = [0.0f32; PBPK_TIME_POINTS];
-    let mut c_unbound_brain_nm = [0.0f32; PBPK_TIME_POINTS];
-    let mut ro_plasma_pct = [0.0f32; PBPK_TIME_POINTS];
-    let mut ro_brain_pct = [0.0f32; PBPK_TIME_POINTS];
-    let mut gi_absorbed_pct = [0.0f32; PBPK_TIME_POINTS];
-
-    let sample_stride = total_steps / (PBPK_TIME_POINTS - 1);
-    let mut sample_idx = 0usize;
-
-    let mut cmax_tot_p = 0.0f64;
-    let mut cmax_unb_p = 0.0f64;
-    let mut cmax_unb_b = 0.0f64;
-    let mut tmax_p = 0.0f64;
-    let mut tmax_b = 0.0f64;
-    let mut auc_unb_p = 0.0f64;
-    let mut auc_unb_b = 0.0f64;
-    let mut t_above_ic50_p = 0.0f64;
-    let mut t_above_ic50_b = 0.0f64;
-
-    for step in 0..=total_steps {
-        let t = (step as f64) * dt;
-        while next_dose_ptr < schedule.len() && t + 1e-9 >= schedule[next_dose_ptr] {
-            // Immediate-release tablet: 15% rapidly wetted fine fraction, 85% solid granules
-            y[0] += 0.85 * dose_nmol_per_admin;
-            y[1] += 0.15 * dose_nmol_per_admin;
-            total_dosed_nmol += dose_nmol_per_admin;
-            next_dose_ptr += 1;
-        }
-
-        let cp_tot = (y[16] / v_central_l).max(0.0);
-        let cp_unb = fu_plasma * cp_tot;
-        let cb_unb = (y[18] / v_brain_isf_l).max(0.0);
-        let ro_p = 100.0 * cp_unb / (cp_unb + target_ic50_nm);
-        let ro_b = 100.0 * cb_unb / (cb_unb + target_ic50_nm);
-
-        if cp_tot > cmax_tot_p {
-            cmax_tot_p = cp_tot;
-            cmax_unb_p = cp_unb;
-            tmax_p = t;
-        }
-        if cb_unb > cmax_unb_b {
-            cmax_unb_b = cb_unb;
-            tmax_b = t;
-        }
-        if step > 0 {
-            auc_unb_p += cp_unb * dt;
-            auc_unb_b += cb_unb * dt;
-            if cp_unb >= target_ic50_nm {
-                t_above_ic50_p += dt;
-            }
-            if cb_unb >= target_ic50_nm {
-                t_above_ic50_b += dt;
-            }
-        }
-
-        if step % sample_stride == 0 && sample_idx < PBPK_TIME_POINTS {
-            time_hr[sample_idx] = t as f32;
-            c_total_plasma_nm[sample_idx] = cp_tot as f32;
-            c_unbound_plasma_nm[sample_idx] = cp_unb as f32;
-            c_unbound_brain_nm[sample_idx] = cb_unb as f32;
-            ro_plasma_pct[sample_idx] = ro_p as f32;
-            ro_brain_pct[sample_idx] = ro_b as f32;
-            gi_absorbed_pct[sample_idx] =
-                ((y[19] / total_dosed_nmol.max(1.0)) * 100.0).clamp(0.0, 100.0) as f32;
-            sample_idx += 1;
-        }
-
-        if step < total_steps {
-            let k1 = rhs(&y);
-            let mut y2 = [0.0f64; 20];
-            for j in 0..20 {
-                y2[j] = (y[j] + 0.5 * dt * k1[j]).max(0.0);
-            }
-            let k2 = rhs(&y2);
-            let mut y3 = [0.0f64; 20];
-            for j in 0..20 {
-                y3[j] = (y[j] + 0.5 * dt * k2[j]).max(0.0);
-            }
-            let k3 = rhs(&y3);
-            let mut y4 = [0.0f64; 20];
-            for j in 0..20 {
-                y4[j] = (y[j] + dt * k3[j]).max(0.0);
-            }
-            let k4 = rhs(&y4);
-            for j in 0..20 {
-                y[j] = (y[j] + (dt / 6.0) * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j])).max(0.0);
-            }
-        }
+    #[derive(Clone, Copy)]
+    struct SubjectIivMults {
+        fu_p: f64,
+        cl_3a4: f64,
+        cl_other: f64,
+        ka_ge: f64,
+        vss: f64,
+        q_h: f64,
+        ps_bbb: f64,
     }
 
-    let fa_integrated = (y[19] / total_dosed_nmol.max(1.0)).clamp(0.01, 0.999);
-    let f_oral_pct = (fa_integrated * fg_gut_wall * fh_hepatic * 100.0).clamp(0.5, 99.0);
-    // Two-compartment beta-phase terminal half-life from V_ss and CL_sys:
-    let terminal_t_half_hr = (0.69315 * vss_total_l / cl_sys_plasma_l_hr.max(0.15)).clamp(0.35, 96.0);
-    let peak_ro_p = 100.0 * cmax_unb_p / (cmax_unb_p + target_ic50_nm);
-    let peak_ro_b = 100.0 * cmax_unb_b / (cmax_unb_b + target_ic50_nm);
+    struct SingleSubjectRun {
+        fa_integrated: f64,
+        fg_gut_wall: f64,
+        fh_hepatic: f64,
+        f_oral_pct: f64,
+        cl_hepatic_blood_l_hr: f64,
+        hepatic_extraction_eh: f64,
+        terminal_t_half_hr: f64,
+        cmax_total_plasma_nm: f64,
+        cmax_unbound_plasma_nm: f64,
+        cmax_unbound_brain_nm: f64,
+        tmax_plasma_hr: f64,
+        tmax_brain_hr: f64,
+        auc_unbound_plasma_nm_hr: f64,
+        auc_unbound_brain_nm_hr: f64,
+        time_above_ic50_plasma_hr: f64,
+        time_above_ic50_brain_hr: f64,
+        peak_ro_plasma_pct: f64,
+        peak_ro_brain_pct: f64,
+        peak_cyp3a4_sat_pct: f64,
+        time_hr: [f32; PBPK_TIME_POINTS],
+        c_total_plasma_nm: [f32; PBPK_TIME_POINTS],
+        c_unbound_plasma_nm: [f32; PBPK_TIME_POINTS],
+        c_unbound_brain_nm: [f32; PBPK_TIME_POINTS],
+        ro_plasma_pct: [f32; PBPK_TIME_POINTS],
+        ro_brain_pct: [f32; PBPK_TIME_POINTS],
+        gi_absorbed_pct: [f32; PBPK_TIME_POINTS],
+    }
+
+    let solve_quad_unbound = |a_lin: f64, b_vmax: f64, r_in: f64| -> f64 {
+        if r_in <= 0.0 || a_lin <= 0.0 {
+            return 0.0;
+        }
+        let b_coef = a_lin * km_nm + b_vmax - r_in;
+        let disc = (b_coef * b_coef + 4.0 * a_lin * r_in * km_nm).sqrt();
+        if b_coef >= 0.0 {
+            (2.0 * r_in * km_nm) / (b_coef + disc).max(1e-18)
+        } else {
+            (-b_coef + disc) / (2.0 * a_lin)
+        }
+    };
+
+    let integrate_subject = |mult: SubjectIivMults| -> SingleSubjectRun {
+        let fu_p_s = (fu_plasma * mult.fu_p).clamp(0.001, 0.98);
+        let fu_gut_s = (fu_gut * mult.fu_p).clamp(0.02, 1.0);
+        let fu_blood_s = (fu_p_s / rbp).clamp(0.001, 1.0);
+        let q_h_s = (q_h_blood_l_hr * mult.q_h).max(20.0);
+        let vmax_liv_s = vmax_liver_3a4_nmol_hr * mult.cl_3a4;
+        let vmax_gut_s = vmax_gut_3a4_nmol_hr * mult.cl_3a4;
+        let cl_other_s = cl_int_other_lin * mult.cl_other;
+        let ugt_gut_s = ugt_gut_l_hr * mult.cl_other;
+        let ka_s = (ka_seg_hr * mult.ka_ge).clamp(0.02, 14.0);
+        let k_ge_s = (k_ge_hr * mult.ka_ge).clamp(0.25, 6.0);
+        let vss_s = (vss_total_l * mult.vss).max(6.0);
+        let v_central_s = (4.2 + 0.12 * vss_s).clamp(4.2, vss_s.max(5.0));
+        let v_periph_s = (vss_s - v_central_s).max(2.5);
+        let ps_bbb_s = (ps_bbb_l_hr * mult.ps_bbb).clamp(0.02, 48.0);
+        let cl_renal_s = (cl_renal_plasma_l_hr * mult.fu_p).clamp(0.01, 10.0);
+
+        let dt = 0.01f64;
+        let total_steps = ((horizon_hr / dt).round() as usize).max(96);
+
+        // State vector Y (len = 22, all in nmol):
+        // [0]: stom_solid, [1]: stom_diss, [2..9]: si_solid[0..7], [9..16]: si_diss[0..7],
+        // [16]: central, [17]: periph, [18]: brain_isf, [19]: cumulative_absorbed_nmol,
+        // [20]: cumulative_portal_nmol (after Fg), [21]: cumulative_systemic_nmol (after Fh)
+        let mut y = [0.0f64; 22];
+        let mut total_dosed_nmol = 0.0f64;
+        let mut next_dose_ptr = 0usize;
+
+        let eval_gut_and_liver = |j_abs_sum: f64, c_p_tot: f64| -> (f64, f64, f64, f64, f64) {
+            let a_gut = q_gut_l_hr + fu_gut_s * ugt_gut_s;
+            let c_u_gut = solve_quad_unbound(a_gut, fu_gut_s * vmax_gut_s, fu_gut_s * j_abs_sum);
+            let cl_u_gut_3a4_t = vmax_gut_s / (km_nm + c_u_gut);
+            let fg_t = (q_gut_l_hr / (q_gut_l_hr + fu_gut_s * (cl_u_gut_3a4_t + ugt_gut_s)))
+                .clamp(0.08, 0.995);
+            let j_portal = j_abs_sum * fg_t;
+
+            let j_in_liver = j_portal + q_h_s * (c_p_tot * rbp);
+            let a_liv = q_h_s / fu_blood_s + cl_other_s;
+            let c_u_liver = solve_quad_unbound(a_liv, vmax_liv_s, j_in_liver);
+            let cl_int_3a4_t = vmax_liv_s / (km_nm + c_u_liver);
+            let cl_int_liv_t = cl_int_3a4_t + cl_other_s;
+            let eh_t = ((fu_blood_s * cl_int_liv_t) / (q_h_s + fu_blood_s * cl_int_liv_t))
+                .clamp(0.01, 0.96);
+            let fh_t = (1.0 - eh_t).clamp(0.04, 0.99);
+            let sat_liv = c_u_liver / (km_nm + c_u_liver);
+            let sat_gut = c_u_gut / (km_nm + c_u_gut);
+            (fg_t, fh_t, eh_t, j_portal, sat_liv.max(sat_gut))
+        };
+
+        let rhs = |s: &[f64; 22]| -> [f64; 22] {
+            let mut dy = [0.0f64; 22];
+
+            let c_stom = s[1].max(0.0) / v_stom_l;
+            let sat_frac_stom = (1.0 - c_stom / c_sat_stom_nm).clamp(0.0, 1.0);
+            let j_diss_stom = k_diss_base_hr * s[0].max(0.0) * sat_frac_stom;
+            let j_emp_solid = (k_ge_s * 0.55) * s[0].max(0.0);
+            let j_emp_diss = k_ge_s * s[1].max(0.0);
+            dy[0] = -j_diss_stom - j_emp_solid;
+            dy[1] = j_diss_stom - j_emp_diss;
+
+            let mut j_abs_sum = 0.0f64;
+            for seg in 0..7 {
+                let sol_idx = 2 + seg;
+                let dis_idx = 9 + seg;
+                let in_sol = if seg == 0 {
+                    j_emp_solid
+                } else {
+                    k_transit_hr * s[2 + seg - 1].max(0.0)
+                };
+                let in_dis = if seg == 0 {
+                    j_emp_diss
+                } else {
+                    k_transit_hr * s[9 + seg - 1].max(0.0)
+                };
+                let c_seg = s[dis_idx].max(0.0) / v_si_seg_l;
+                let sat_frac = (1.0 - c_seg / c_sat_si_nm).clamp(0.0, 1.0);
+                let j_diss = k_diss_base_hr * s[sol_idx].max(0.0) * sat_frac;
+                let out_sol = k_transit_hr * s[sol_idx].max(0.0);
+                let out_dis = k_transit_hr * s[dis_idx].max(0.0);
+                let reg_mult = if seg <= 3 { 1.08 } else { 0.86 };
+                let j_abs = (ka_s * reg_mult) * s[dis_idx].max(0.0);
+
+                dy[sol_idx] = in_sol - out_sol - j_diss;
+                dy[dis_idx] = in_dis - out_dis + j_diss - j_abs;
+                j_abs_sum += j_abs;
+            }
+
+            let c_p_tot = s[16].max(0.0) / v_central_s;
+            let c_p_unb = fu_p_s * c_p_tot;
+            let c_periph = s[17].max(0.0) / v_periph_s;
+            let c_br_unb = s[18].max(0.0) / v_brain_isf_l;
+
+            let (_fg_t, fh_t, eh_t, j_portal, _sat) = eval_gut_and_liver(j_abs_sum, c_p_tot);
+            let j_sys_in = j_portal * fh_t;
+            let j_elim = (q_h_s * eh_t * rbp + cl_renal_s) * c_p_tot;
+            let j_dist = q_periph_l_hr * (c_p_tot - c_periph);
+            let j_bbb_net = ps_bbb_s * c_p_unb - (ps_bbb_s / kp_uu_brain) * c_br_unb;
+
+            dy[16] = j_sys_in - j_elim - j_dist;
+            dy[17] = j_dist;
+            dy[18] = j_bbb_net;
+            dy[19] = j_abs_sum;
+            dy[20] = j_portal;
+            dy[21] = j_sys_in;
+            dy
+        };
+
+        let mut time_hr = [0.0f32; PBPK_TIME_POINTS];
+        let mut c_total_plasma_nm = [0.0f32; PBPK_TIME_POINTS];
+        let mut c_unbound_plasma_nm = [0.0f32; PBPK_TIME_POINTS];
+        let mut c_unbound_brain_nm = [0.0f32; PBPK_TIME_POINTS];
+        let mut ro_plasma_pct = [0.0f32; PBPK_TIME_POINTS];
+        let mut ro_brain_pct = [0.0f32; PBPK_TIME_POINTS];
+        let mut gi_absorbed_pct = [0.0f32; PBPK_TIME_POINTS];
+
+        let sample_stride = total_steps / (PBPK_TIME_POINTS - 1);
+        let mut sample_idx = 0usize;
+
+        let mut cmax_tot_p = 0.0f64;
+        let mut cmax_unb_p = 0.0f64;
+        let mut cmax_unb_b = 0.0f64;
+        let mut tmax_p = 0.0f64;
+        let mut tmax_b = 0.0f64;
+        let mut auc_unb_p = 0.0f64;
+        let mut auc_unb_b = 0.0f64;
+        let mut t_above_ic50_p = 0.0f64;
+        let mut t_above_ic50_b = 0.0f64;
+        let mut peak_sat_frac = 0.0f64;
+
+        for step in 0..=total_steps {
+            let t = (step as f64) * dt;
+            while next_dose_ptr < schedule.len() && t + 1e-9 >= schedule[next_dose_ptr] {
+                y[0] += 0.85 * dose_nmol_per_admin;
+                y[1] += 0.15 * dose_nmol_per_admin;
+                total_dosed_nmol += dose_nmol_per_admin;
+                next_dose_ptr += 1;
+            }
+
+            let cp_tot = (y[16] / v_central_s).max(0.0);
+            let cp_unb = fu_p_s * cp_tot;
+            let cb_unb = (y[18] / v_brain_isf_l).max(0.0);
+            let ro_p = 100.0 * cp_unb / (cp_unb + target_ic50_nm);
+            let ro_b = 100.0 * cb_unb / (cb_unb + target_ic50_nm);
+
+            // Track instantaneous peak CYP3A4 saturation across gut & liver
+            let mut j_abs_now = 0.0f64;
+            for seg in 0..7 {
+                let reg_mult = if seg <= 3 { 1.08 } else { 0.86 };
+                j_abs_now += (ka_s * reg_mult) * y[9 + seg].max(0.0);
+            }
+            let (_, _, _, _, sat_now) = eval_gut_and_liver(j_abs_now, cp_tot);
+            if sat_now > peak_sat_frac {
+                peak_sat_frac = sat_now;
+            }
+
+            if cp_tot > cmax_tot_p {
+                cmax_tot_p = cp_tot;
+                cmax_unb_p = cp_unb;
+                tmax_p = t;
+            }
+            if cb_unb > cmax_unb_b {
+                cmax_unb_b = cb_unb;
+                tmax_b = t;
+            }
+            if step > 0 {
+                auc_unb_p += cp_unb * dt;
+                auc_unb_b += cb_unb * dt;
+                if cp_unb >= target_ic50_nm {
+                    t_above_ic50_p += dt;
+                }
+                if cb_unb >= target_ic50_nm {
+                    t_above_ic50_b += dt;
+                }
+            }
+
+            if step % sample_stride == 0 && sample_idx < PBPK_TIME_POINTS {
+                time_hr[sample_idx] = t as f32;
+                c_total_plasma_nm[sample_idx] = cp_tot as f32;
+                c_unbound_plasma_nm[sample_idx] = cp_unb as f32;
+                c_unbound_brain_nm[sample_idx] = cb_unb as f32;
+                ro_plasma_pct[sample_idx] = ro_p as f32;
+                ro_brain_pct[sample_idx] = ro_b as f32;
+                gi_absorbed_pct[sample_idx] =
+                    ((y[19] / total_dosed_nmol.max(1.0)) * 100.0).clamp(0.0, 100.0) as f32;
+                sample_idx += 1;
+            }
+
+            if step < total_steps {
+                let k1 = rhs(&y);
+                let mut y2 = [0.0f64; 22];
+                for j in 0..22 {
+                    y2[j] = (y[j] + 0.5 * dt * k1[j]).max(0.0);
+                }
+                let k2 = rhs(&y2);
+                let mut y3 = [0.0f64; 22];
+                for j in 0..22 {
+                    y3[j] = (y[j] + 0.5 * dt * k2[j]).max(0.0);
+                }
+                let k3 = rhs(&y3);
+                let mut y4 = [0.0f64; 22];
+                for j in 0..22 {
+                    y4[j] = (y[j] + dt * k3[j]).max(0.0);
+                }
+                let k4 = rhs(&y4);
+                for j in 0..22 {
+                    y[j] = (y[j] + (dt / 6.0) * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j])).max(0.0);
+                }
+            }
+        }
+
+        let total_abs = y[19].max(1e-9);
+        let fa_integrated = (total_abs / total_dosed_nmol.max(1.0)).clamp(0.01, 0.999);
+        let fg_gut_wall = (y[20] / total_abs).clamp(0.08, 0.995);
+        let fh_hepatic = (y[21] / y[20].max(1e-9)).clamp(0.04, 0.99);
+        let f_oral_pct = (fa_integrated * fg_gut_wall * fh_hepatic * 100.0).clamp(0.01, 99.0);
+        let hepatic_extraction_eh = (1.0 - fh_hepatic).clamp(0.01, 0.96);
+        let cl_hepatic_blood_l_hr = q_h_s * hepatic_extraction_eh;
+        let cl_sys_plasma_l_hr = cl_hepatic_blood_l_hr * rbp + cl_renal_s;
+        let terminal_t_half_hr = (0.69315 * vss_s / cl_sys_plasma_l_hr.max(0.15)).clamp(0.35, 96.0);
+        let peak_ro_p = 100.0 * cmax_unb_p / (cmax_unb_p + target_ic50_nm);
+        let peak_ro_b = 100.0 * cmax_unb_b / (cmax_unb_b + target_ic50_nm);
+
+        SingleSubjectRun {
+            fa_integrated,
+            fg_gut_wall,
+            fh_hepatic,
+            f_oral_pct,
+            cl_hepatic_blood_l_hr,
+            hepatic_extraction_eh,
+            terminal_t_half_hr,
+            cmax_total_plasma_nm: cmax_tot_p,
+            cmax_unbound_plasma_nm: cmax_unb_p,
+            cmax_unbound_brain_nm: cmax_unb_b,
+            tmax_plasma_hr: tmax_p,
+            tmax_brain_hr: tmax_b,
+            auc_unbound_plasma_nm_hr: auc_unb_p,
+            auc_unbound_brain_nm_hr: auc_unb_b,
+            time_above_ic50_plasma_hr: t_above_ic50_p,
+            time_above_ic50_brain_hr: t_above_ic50_b,
+            peak_ro_plasma_pct: peak_ro_p,
+            peak_ro_brain_pct: peak_ro_b,
+            peak_cyp3a4_sat_pct: (peak_sat_frac * 100.0).clamp(0.0, 100.0),
+            time_hr,
+            c_total_plasma_nm,
+            c_unbound_plasma_nm,
+            c_unbound_brain_nm,
+            ro_plasma_pct,
+            ro_brain_pct,
+            gi_absorbed_pct,
+        }
+    };
+
+    let nom = integrate_subject(SubjectIivMults {
+        fu_p: 1.0,
+        cl_3a4: 1.0,
+        cl_other: 1.0,
+        ka_ge: 1.0,
+        vss: 1.0,
+        q_h: 1.0,
+        ps_bbb: 1.0,
+    });
+
+    // Deterministic virtual population (rayon-parallel, antithetic log-normal human IIV) for 90% CI (P5-P95)
+    let mut f_oral_ci90 = [nom.f_oral_pct, nom.f_oral_pct];
+    let mut cmax_u_plasma_ci90_nm = [nom.cmax_unbound_plasma_nm, nom.cmax_unbound_plasma_nm];
+    let mut cmax_u_brain_ci90_nm = [nom.cmax_unbound_brain_nm, nom.cmax_unbound_brain_nm];
+    let mut auc_u_plasma_ci90_nm_hr = [nom.auc_unbound_plasma_nm_hr, nom.auc_unbound_plasma_nm_hr];
+    let mut c_unbound_plasma_p05_nm = nom.c_unbound_plasma_nm;
+    let mut c_unbound_plasma_p95_nm = nom.c_unbound_plasma_nm;
+    let mut c_unbound_brain_p05_nm = nom.c_unbound_brain_nm;
+    let mut c_unbound_brain_p95_nm = nom.c_unbound_brain_nm;
+
+    let pop_n = if config.virtual_pop_n >= 10 {
+        config.virtual_pop_n.min(200)
+    } else {
+        0
+    };
+
+    if pop_n >= 10 {
+        let mut seeds = Vec::with_capacity(pop_n);
+        let pairs = (pop_n + 1) / 2;
+        for p in 0..pairs {
+            let z = draw_iiv_normals(0x5A17_A71A_0001u64 ^ ((p as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)));
+            for sign in [1.0_f64, -1.0_f64] {
+                if seeds.len() >= pop_n {
+                    break;
+                }
+                seeds.push(SubjectIivMults {
+                    fu_p: (sign * 0.20 * z[0]).exp(),
+                    cl_3a4: (sign * 0.45 * z[1]).exp(),
+                    cl_other: (sign * 0.25 * z[2]).exp(),
+                    ka_ge: (sign * 0.30 * z[3]).exp(),
+                    vss: (sign * 0.18 * z[4]).exp(),
+                    q_h: (sign * 0.18 * z[5]).exp(),
+                    ps_bbb: (sign * 0.25 * z[6]).exp(),
+                });
+            }
+        }
+
+        let runs: Vec<SingleSubjectRun> = seeds.into_par_iter().map(integrate_subject).collect();
+        let mut f_vals: Vec<f64> = runs.iter().map(|r| r.f_oral_pct).collect();
+        let mut cp_vals: Vec<f64> = runs.iter().map(|r| r.cmax_unbound_plasma_nm).collect();
+        let mut cb_vals: Vec<f64> = runs.iter().map(|r| r.cmax_unbound_brain_nm).collect();
+        let mut auc_vals: Vec<f64> = runs.iter().map(|r| r.auc_unbound_plasma_nm_hr).collect();
+
+        f_oral_ci90 = ci90_bounds(&mut f_vals);
+        cmax_u_plasma_ci90_nm = ci90_bounds(&mut cp_vals);
+        cmax_u_brain_ci90_nm = ci90_bounds(&mut cb_vals);
+        auc_u_plasma_ci90_nm_hr = ci90_bounds(&mut auc_vals);
+
+        let mut tp_buf = Vec::with_capacity(runs.len());
+        let mut tb_buf = Vec::with_capacity(runs.len());
+        for ti in 0..PBPK_TIME_POINTS {
+            tp_buf.clear();
+            tb_buf.clear();
+            for r in &runs {
+                tp_buf.push(r.c_unbound_plasma_nm[ti] as f64);
+                tb_buf.push(r.c_unbound_brain_nm[ti] as f64);
+            }
+            let [p05, p95] = ci90_bounds(&mut tp_buf);
+            let [b05, b95] = ci90_bounds(&mut tb_buf);
+            c_unbound_plasma_p05_nm[ti] = p05 as f32;
+            c_unbound_plasma_p95_nm[ti] = p95 as f32;
+            c_unbound_brain_p05_nm[ti] = b05 as f32;
+            c_unbound_brain_p95_nm[ti] = b95 as f32;
+        }
+    }
 
     OralPbpkReport {
         compound_id: mol.id.clone(),
@@ -786,47 +1044,96 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
         peff_1e4_cm_s,
         luminal_sol_ug_ml,
         fa_analytical_perm,
-        fa_integrated,
+        fa_integrated: nom.fa_integrated,
         q_gut_l_hr,
-        fg_gut_wall,
+        fg_gut_wall: nom.fg_gut_wall,
         cl_int_u_ml_min_kg: cyp.cl_int_ml_min_kg,
-        cl_hepatic_blood_l_hr,
+        cl_hepatic_blood_l_hr: nom.cl_hepatic_blood_l_hr,
         cl_renal_plasma_l_hr,
-        hepatic_extraction_eh,
-        fh_hepatic,
-        f_oral_pct,
+        hepatic_extraction_eh: nom.hepatic_extraction_eh,
+        fh_hepatic: nom.fh_hepatic,
+        f_oral_pct: nom.f_oral_pct,
         fu_brain,
         ps_bbb_l_hr,
         bbb_efflux_ratio: bbb_er,
         kp_brain_total,
         kp_uu_brain,
         cns_class,
-        cmax_total_plasma_nm: cmax_tot_p,
-        cmax_unbound_plasma_nm: cmax_unb_p,
-        cmax_unbound_brain_nm: cmax_unb_b,
-        tmax_plasma_hr: tmax_p,
-        tmax_brain_hr: tmax_b,
-        auc_unbound_plasma_nm_hr: auc_unb_p,
-        auc_unbound_brain_nm_hr: auc_unb_b,
-        terminal_t_half_hr,
-        time_above_ic50_plasma_hr: t_above_ic50_p,
-        time_above_ic50_brain_hr: t_above_ic50_b,
-        peak_ro_plasma_pct: peak_ro_p,
-        peak_ro_brain_pct: peak_ro_b,
-        time_hr,
-        c_total_plasma_nm,
-        c_unbound_plasma_nm,
-        c_unbound_brain_nm,
-        ro_plasma_pct,
-        ro_brain_pct,
-        gi_absorbed_pct,
+        cmax_total_plasma_nm: nom.cmax_total_plasma_nm,
+        cmax_unbound_plasma_nm: nom.cmax_unbound_plasma_nm,
+        cmax_unbound_brain_nm: nom.cmax_unbound_brain_nm,
+        tmax_plasma_hr: nom.tmax_plasma_hr,
+        tmax_brain_hr: nom.tmax_brain_hr,
+        auc_unbound_plasma_nm_hr: nom.auc_unbound_plasma_nm_hr,
+        auc_unbound_brain_nm_hr: nom.auc_unbound_brain_nm_hr,
+        terminal_t_half_hr: nom.terminal_t_half_hr,
+        time_above_ic50_plasma_hr: nom.time_above_ic50_plasma_hr,
+        time_above_ic50_brain_hr: nom.time_above_ic50_brain_hr,
+        peak_ro_plasma_pct: nom.peak_ro_plasma_pct,
+        peak_ro_brain_pct: nom.peak_ro_brain_pct,
+        time_hr: nom.time_hr,
+        c_total_plasma_nm: nom.c_total_plasma_nm,
+        c_unbound_plasma_nm: nom.c_unbound_plasma_nm,
+        c_unbound_brain_nm: nom.c_unbound_brain_nm,
+        ro_plasma_pct: nom.ro_plasma_pct,
+        ro_brain_pct: nom.ro_brain_pct,
+        gi_absorbed_pct: nom.gi_absorbed_pct,
+        cyp3a4_km_um,
+        cyp3a4_vmax_umol_hr,
+        cyp3a4_peak_saturation_pct: nom.peak_cyp3a4_sat_pct,
+        virtual_pop_n: pop_n,
+        f_oral_ci90,
+        cmax_u_plasma_ci90_nm,
+        cmax_u_brain_ci90_nm,
+        auc_u_plasma_ci90_nm_hr,
+        c_unbound_plasma_p05_nm,
+        c_unbound_plasma_p95_nm,
+        c_unbound_brain_p05_nm,
+        c_unbound_brain_p95_nm,
     }
+}
+
+fn splitmix64(x: &mut u64) -> u64 {
+    *x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn draw_iiv_normals(mut state: u64) -> [f64; 7] {
+    let mut out = [0.0f64; 7];
+    let mut i = 0;
+    while i < 7 {
+        let u1 = (((splitmix64(&mut state) >> 11) as f64) + 0.5) / ((1u64 << 53) as f64);
+        let u2 = ((splitmix64(&mut state) >> 11) as f64) / ((1u64 << 53) as f64);
+        let r = (-2.0 * u1.clamp(1e-12, 1.0).ln()).sqrt();
+        let theta = std::f64::consts::TAU * u2;
+        out[i] = (r * theta.cos()).clamp(-2.8, 2.8);
+        if i + 1 < 7 {
+            out[i + 1] = (r * theta.sin()).clamp(-2.8, 2.8);
+        }
+        i += 2;
+    }
+    out
+}
+
+fn ci90_bounds(vals: &mut [f64]) -> [f64; 2] {
+    if vals.is_empty() {
+        return [0.0, 0.0];
+    }
+    vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = vals.len();
+    let idx_lo = ((n - 1) as f64 * 0.05).round() as usize;
+    let idx_hi = ((n - 1) as f64 * 0.95).round() as usize;
+    [vals[idx_lo.min(n - 1)], vals[idx_hi.min(n - 1)]]
 }
 
 /// Evaluates standard `50 mg` fasted single-dose oral PBPK & `Kp,uu,brain` across an entire dataset.
 pub fn summarize_dataset_oral_pbpk(mols: &[Molecule], dose_mg: f64) -> Vec<PbpkDatasetRow> {
     let cfg = PbpkDosingConfig {
         dose_mg,
+        virtual_pop_n: 0,
         ..PbpkDosingConfig::default()
     };
     mols.iter()
@@ -904,4 +1211,89 @@ pub fn export_dataset_pbpk_csv(rows: &[PbpkDatasetRow]) -> String {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::load_benchmark_26;
+
+    #[test]
+    fn test_cyp3a4_km_saturable_nonlinearity_mass_balance_and_ci90_bands() {
+        let bench = load_benchmark_26();
+        let halo = bench
+            .iter()
+            .find(|m| m.name.eq_ignore_ascii_case("Haloperidol"))
+            .expect("Haloperidol");
+
+        let low = simulate_oral_pbpk(
+            halo,
+            PbpkDosingConfig {
+                dose_mg: 2.0,
+                cyp3a4_km_um: Some(1.5),
+                ..PbpkDosingConfig::default()
+            },
+        );
+        let high = simulate_oral_pbpk(
+            halo,
+            PbpkDosingConfig {
+                dose_mg: 500.0,
+                cyp3a4_km_um: Some(1.5),
+                ..PbpkDosingConfig::default()
+            },
+        );
+
+        // 1. Exact mass-balance identity across both doses and all regimens
+        for reg in [
+            DosingRegimen::SingleDose24h,
+            DosingRegimen::OnceDailyQd48h,
+            DosingRegimen::TwiceDailyBid48h,
+        ] {
+            let r = simulate_oral_pbpk(
+                halo,
+                PbpkDosingConfig {
+                    dose_mg: 75.0,
+                    regimen: reg,
+                    ..PbpkDosingConfig::default()
+                },
+            );
+            let exp_f = r.fa_integrated * r.fg_gut_wall * r.fh_hepatic * 100.0;
+            assert!(
+                (r.f_oral_pct - exp_f).abs() < 1e-4,
+                "F_oral != Fa*Fg*Fh*100 for {:?}: {} vs {}",
+                reg,
+                r.f_oral_pct,
+                exp_f
+            );
+        }
+
+        // 2. Saturable Michaelis-Menten CYP3A4 nonlinearity at 500 mg vs 2 mg
+        assert!(high.cyp3a4_peak_saturation_pct > low.cyp3a4_peak_saturation_pct);
+        assert!(
+            high.cyp3a4_peak_saturation_pct > 5.0,
+            "Expected measurable CYP3A4 saturation at 500 mg with Km=1.5 uM, got {:.2}%",
+            high.cyp3a4_peak_saturation_pct
+        );
+        assert!(
+            high.fg_gut_wall >= low.fg_gut_wall && high.fh_hepatic >= low.fh_hepatic,
+            "Saturating first-pass CYP3A4 must elevate Fg/Fh at 500 mg vs 2 mg"
+        );
+        assert!(high.fg_gut_wall * high.fh_hepatic > low.fg_gut_wall * low.fh_hepatic);
+
+        // 3. Virtual-population 90% CI ordering (p05 <= nominal <= p95)
+        assert_eq!(low.virtual_pop_n, 48);
+        assert!(low.f_oral_ci90[0] <= low.f_oral_pct && low.f_oral_pct <= low.f_oral_ci90[1]);
+        assert!(
+            low.cmax_u_plasma_ci90_nm[0] <= low.cmax_unbound_plasma_nm
+                && low.cmax_unbound_plasma_nm <= low.cmax_u_plasma_ci90_nm[1]
+        );
+        assert!(
+            low.cmax_u_brain_ci90_nm[0] <= low.cmax_unbound_brain_nm
+                && low.cmax_unbound_brain_nm <= low.cmax_u_brain_ci90_nm[1]
+        );
+        for ti in 0..PBPK_TIME_POINTS {
+            assert!(low.c_unbound_plasma_p05_nm[ti] <= low.c_unbound_plasma_p95_nm[ti] + 1e-6);
+            assert!(low.c_unbound_brain_p05_nm[ti] <= low.c_unbound_brain_p95_nm[ti] + 1e-6);
+        }
+    }
 }

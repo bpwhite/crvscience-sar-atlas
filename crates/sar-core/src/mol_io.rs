@@ -517,7 +517,7 @@ fn split_csv_row(line: &str) -> Vec<String> {
     out
 }
 
-/// Parses a multi-record MDL V2000 `.sdf` or single `.mol` file.
+/// Parses a multi-record MDL V2000 or V3000 `.sdf` / `.mol` file.
 pub fn parse_sdf_dataset(sdf_text: &str) -> Result<Vec<Molecule>, MolIoError> {
     let mut out = Vec::new();
     for raw_rec in sdf_text.split("$$$$") {
@@ -531,7 +531,7 @@ pub fn parse_sdf_dataset(sdf_text: &str) -> Result<Vec<Molecule>, MolIoError> {
     Ok(out)
 }
 
-/// Parses a single MDL V2000 `.mol` / `.sdf` block including 2D coordinates and SD property tags.
+/// Parses a single MDL V2000 or V3000 `.mol` / `.sdf` block including 2D coordinates and SD property tags.
 pub fn parse_sdf_record(record: &str) -> Result<Molecule, MolIoError> {
     let lines: Vec<&str> = record.lines().collect();
     if lines.len() < 4 {
@@ -540,25 +540,34 @@ pub fn parse_sdf_record(record: &str) -> Result<Molecule, MolIoError> {
 
     let title = lines[0].trim().to_string();
     let counts_line = lines[3];
+    let is_v3000 = counts_line.to_ascii_uppercase().contains("V3000")
+        || lines[4..]
+            .iter()
+            .any(|l| l.trim_start().starts_with("M  V30"));
+
+    if is_v3000 {
+        return parse_v3000_record(&title, &lines);
+    }
+
     let (n_atoms, n_bonds) = if counts_line.len() >= 6 {
-        let na = counts_line[0..3]
-            .trim()
-            .parse::<usize>()
-            .ok();
-        let nb = counts_line[3..6]
-            .trim()
-            .parse::<usize>()
-            .ok();
+        let na = counts_line[0..3].trim().parse::<usize>().ok();
+        let nb = counts_line[3..6].trim().parse::<usize>().ok();
         if let (Some(a), Some(b)) = (na, nb) {
             (a, b)
         } else {
             let ws: Vec<&str> = counts_line.split_whitespace().collect();
             if ws.len() < 2 {
-                return Err(MolIoError::InvalidSdf("Cannot parse V2000 counts line".to_string()));
+                return Err(MolIoError::InvalidSdf(
+                    "Cannot parse V2000 counts line".to_string(),
+                ));
             }
             (
-                ws[0].parse().map_err(|_| MolIoError::InvalidSdf("Bad atom count".into()))?,
-                ws[1].parse().map_err(|_| MolIoError::InvalidSdf("Bad bond count".into()))?,
+                ws[0]
+                    .parse()
+                    .map_err(|_| MolIoError::InvalidSdf("Bad atom count".into()))?,
+                ws[1]
+                    .parse()
+                    .map_err(|_| MolIoError::InvalidSdf("Bad bond count".into()))?,
             )
         }
     } else {
@@ -566,20 +575,30 @@ pub fn parse_sdf_record(record: &str) -> Result<Molecule, MolIoError> {
     };
 
     if lines.len() < 4 + n_atoms + n_bonds {
-        return Err(MolIoError::InvalidSdf("Truncated atom or bond block".to_string()));
+        return Err(MolIoError::InvalidSdf(
+            "Truncated atom or bond block".to_string(),
+        ));
     }
 
     let mut mol = Molecule::new("");
-    mol.name = if title.is_empty() { "SDF-Compound".to_string() } else { title.clone() };
+    mol.name = if title.is_empty() {
+        "SDF-Compound".to_string()
+    } else {
+        title
+    };
     mol.id = mol.name.clone();
 
     let mut has_nonzero_coords = false;
+    let mut raw_atoms: Vec<Atom> = Vec::with_capacity(n_atoms);
 
     for ai in 0..n_atoms {
         let aline = lines[4 + ai];
         let ws: Vec<&str> = aline.split_whitespace().collect();
         if ws.len() < 4 {
-            return Err(MolIoError::InvalidSdf(format!("Malformed atom line {}", ai + 1)));
+            return Err(MolIoError::InvalidSdf(format!(
+                "Malformed atom line {}",
+                ai + 1
+            )));
         }
         let x: f32 = ws[0].parse().unwrap_or(0.0);
         let y: f32 = ws[1].parse().unwrap_or(0.0);
@@ -587,7 +606,7 @@ pub fn parse_sdf_record(record: &str) -> Result<Molecule, MolIoError> {
             has_nonzero_coords = true;
         }
         let sym = ws[3];
-        let elem = Element::from_symbol(sym).unwrap_or(Element::C);
+        let elem = parse_sdf_element(sym);
         let chg_code: i8 = ws.get(5).and_then(|s| s.parse().ok()).unwrap_or(0);
         let charge = match chg_code {
             1 => 3,
@@ -598,7 +617,7 @@ pub fn parse_sdf_record(record: &str) -> Result<Molecule, MolIoError> {
             7 => -3,
             _ => 0,
         };
-        mol.atoms.push(Atom {
+        raw_atoms.push(Atom {
             idx: ai,
             elem,
             charge,
@@ -655,73 +674,98 @@ pub fn parse_sdf_record(record: &str) -> Result<Molecule, MolIoError> {
                 for k in 0..cnt {
                     if let (Some(a_s), Some(c_s)) = (ws.get(1 + 2 * k), ws.get(2 + 2 * k)) {
                         if let (Ok(ai1), Ok(chg)) = (a_s.parse::<usize>(), c_s.parse::<i8>()) {
-                            if ai1 >= 1 && ai1 <= mol.atoms.len() {
-                                mol.atoms[ai1 - 1].charge = chg;
-                                mol.atoms[ai1 - 1].bracketed = chg != 0;
+                            if ai1 >= 1 && ai1 <= raw_atoms.len() {
+                                raw_atoms[ai1 - 1].charge = chg;
+                                raw_atoms[ai1 - 1].bracketed = chg != 0;
                             }
                         }
                     }
                 }
             }
         } else if l.trim_start().starts_with('>') {
-            if let (Some(lt), Some(gt)) = (l.find('<'), l.rfind('>')) {
-                if gt > lt {
-                    let tag = l[lt + 1..gt].trim().to_ascii_uppercase();
-                    let val = lines.get(line_idx + 1).map(|s| s.trim()).unwrap_or("");
-                    match tag.as_str() {
-                        "ID" | "CHEMBL_ID" | "COMPOUND_ID" => {
-                            if !val.is_empty() {
-                                mol.id = val.to_string();
-                            }
-                        }
-                        "NAME" | "GENERIC_NAME" | "TITLE" => {
-                            if !val.is_empty() {
-                                mol.name = val.to_string();
-                            }
-                        }
-                        "TARGET" | "ASSAY_TARGET" => {
-                            if !val.is_empty() {
-                                mol.target = val.to_string();
-                            }
-                        }
-                        "METRIC" | "STANDARD_TYPE" => {
-                            if !val.is_empty() {
-                                mol.metric = val.to_string();
-                            }
-                        }
-                        "RAW_NM" | "IC50_NM" | "KI_NM" => {
-                            if let Ok(v) = val.parse::<f64>() {
-                                mol.raw_nm = v.max(1e-6);
-                                mol.pact = 9.0 - mol.raw_nm.log10();
-                            }
-                        }
-                        "PACT" | "PIC50" | "PKI" => {
-                            if let Ok(v) = val.parse::<f64>() {
-                                mol.pact = v;
-                            }
-                        }
-                        "SMILES" | "CANONICAL_SMILES" => {
-                            if !val.is_empty() {
-                                mol.smiles = val.to_string();
-                            }
-                        }
-                        "REF" | "SOURCE_URL" | "REFERENCE" => {
-                            if !val.is_empty() {
-                                mol.source_url = val.to_string();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            parse_sd_tag_at(&lines, line_idx, &mut mol);
         }
         line_idx += 1;
     }
 
-    // Map heavy atoms while folding explicit H neighbors into `explicit_h`
+    Ok(finalize_sdf_molecule(mol, raw_atoms, raw_bonds, has_nonzero_coords))
+}
+
+fn parse_sdf_element(sym: &str) -> Element {
+    let s = sym.trim();
+    if s.eq_ignore_ascii_case("D") || s.eq_ignore_ascii_case("T") {
+        Element::H
+    } else if s == "*" || s.eq_ignore_ascii_case("R#") || s.eq_ignore_ascii_case("R") {
+        Element::Other(0)
+    } else {
+        Element::from_symbol(s).unwrap_or(Element::C)
+    }
+}
+
+fn parse_sd_tag_at(lines: &[&str], line_idx: usize, mol: &mut Molecule) {
+    let l = lines[line_idx];
+    if let (Some(lt), Some(gt)) = (l.find('<'), l.rfind('>')) {
+        if gt > lt {
+            let tag = l[lt + 1..gt].trim().to_ascii_uppercase();
+            let val = lines.get(line_idx + 1).map(|s| s.trim()).unwrap_or("");
+            match tag.as_str() {
+                "ID" | "CHEMBL_ID" | "COMPOUND_ID" => {
+                    if !val.is_empty() {
+                        mol.id = val.to_string();
+                    }
+                }
+                "NAME" | "GENERIC_NAME" | "TITLE" => {
+                    if !val.is_empty() {
+                        mol.name = val.to_string();
+                    }
+                }
+                "TARGET" | "ASSAY_TARGET" => {
+                    if !val.is_empty() {
+                        mol.target = val.to_string();
+                    }
+                }
+                "METRIC" | "STANDARD_TYPE" => {
+                    if !val.is_empty() {
+                        mol.metric = val.to_string();
+                    }
+                }
+                "RAW_NM" | "IC50_NM" | "KI_NM" => {
+                    if let Ok(v) = val.parse::<f64>() {
+                        mol.raw_nm = v.max(1e-6);
+                        mol.pact = 9.0 - mol.raw_nm.log10();
+                    }
+                }
+                "PACT" | "PIC50" | "PKI" => {
+                    if let Ok(v) = val.parse::<f64>() {
+                        mol.pact = v;
+                    }
+                }
+                "SMILES" | "CANONICAL_SMILES" => {
+                    if !val.is_empty() {
+                        mol.smiles = val.to_string();
+                    }
+                }
+                "REF" | "SOURCE_URL" | "REFERENCE" => {
+                    if !val.is_empty() {
+                        mol.source_url = val.to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn finalize_sdf_molecule(
+    mut mol: Molecule,
+    raw_atoms: Vec<Atom>,
+    raw_bonds: Vec<(usize, usize, u8)>,
+    has_nonzero_coords: bool,
+) -> Molecule {
+    let n_atoms = raw_atoms.len();
     let mut old_to_new: Vec<Option<usize>> = vec![None; n_atoms];
     let mut heavy_atoms: Vec<Atom> = Vec::new();
-    for (old_i, a) in mol.atoms.iter().enumerate() {
+    for (old_i, a) in raw_atoms.iter().enumerate() {
         if a.elem != Element::H {
             let ni = heavy_atoms.len();
             let mut cloned = a.clone();
@@ -731,6 +775,7 @@ pub fn parse_sdf_record(record: &str) -> Result<Molecule, MolIoError> {
         }
     }
 
+    let mut bonded_explicit_h: Vec<u8> = vec![0; heavy_atoms.len()];
     let mut final_bonds: Vec<Bond> = Vec::new();
     for (u_old, v_old, btype) in raw_bonds {
         match (old_to_new[u_old], old_to_new[v_old]) {
@@ -757,24 +802,313 @@ pub fn parse_sdf_record(record: &str) -> Result<Molecule, MolIoError> {
                 });
             }
             (Some(u), None) => {
-                heavy_atoms[u].explicit_h = heavy_atoms[u].explicit_h.saturating_add(1);
+                bonded_explicit_h[u] = bonded_explicit_h[u].saturating_add(1);
             }
             (None, Some(v)) => {
-                heavy_atoms[v].explicit_h = heavy_atoms[v].explicit_h.saturating_add(1);
+                bonded_explicit_h[v] = bonded_explicit_h[v].saturating_add(1);
             }
             (None, None) => {}
         }
+    }
+    // Combine V3000 HCOUNT attribute (if present) with bonded explicit H atoms without double-counting
+    for (u, atom) in heavy_atoms.iter_mut().enumerate() {
+        atom.explicit_h = bonded_explicit_h[u].max(atom.explicit_h);
     }
 
     mol.atoms = heavy_atoms;
     mol.bonds = final_bonds;
     mol.sanitize();
-    // Note: in V2000 SDFs without explicit H records, standard uncharged heavy atoms still get implicit Hs
-    // via `bracketed = charge != 0`, while any attached explicit H increments `explicit_h` cleanly.
     if !has_nonzero_coords {
         compute_2d_coords(&mut mol);
     }
-    Ok(mol)
+    if mol.smiles.is_empty() && !mol.atoms.is_empty() {
+        mol.smiles = crate::sketcher::molecule_to_smiles(&mol);
+    }
+    mol
+}
+
+fn unfold_v3000_lines(lines: &[&str], start_idx: usize) -> (Vec<String>, usize) {
+    let mut logical_lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut idx = start_idx;
+
+    while idx < lines.len() {
+        let raw = lines[idx];
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("M  END") {
+            if !cur.is_empty() {
+                logical_lines.push(std::mem::take(&mut cur));
+            }
+            idx += 1;
+            break;
+        }
+        if let Some(rest) = trimmed.strip_prefix("M  V30") {
+            let body = rest.strip_prefix(' ').unwrap_or(rest).trim_end();
+            if let Some(prefix) = body.strip_suffix('-') {
+                cur.push_str(prefix);
+            } else {
+                cur.push_str(body);
+                logical_lines.push(std::mem::take(&mut cur));
+            }
+        }
+        idx += 1;
+    }
+    if !cur.is_empty() {
+        logical_lines.push(cur);
+    }
+    (logical_lines, idx)
+}
+
+fn tokenize_v3000_line(line: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut paren_depth = 0usize;
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if in_quotes {
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                cur.push(ch);
+            }
+        } else if ch == '"' {
+            in_quotes = true;
+        } else if ch == '(' {
+            paren_depth += 1;
+            cur.push(ch);
+        } else if ch == ')' {
+            paren_depth = paren_depth.saturating_sub(1);
+            cur.push(ch);
+        } else if ch.is_ascii_whitespace() && paren_depth == 0 {
+            if !cur.is_empty() {
+                tokens.push(std::mem::take(&mut cur));
+            }
+        } else {
+            cur.push(ch);
+        }
+    }
+    if !cur.is_empty() {
+        tokens.push(cur);
+    }
+    tokens
+}
+
+fn parse_v3000_record(title: &str, lines: &[&str]) -> Result<Molecule, MolIoError> {
+    let mut mol = Molecule::new("");
+    mol.name = if title.is_empty() {
+        "SDF-Compound".to_string()
+    } else {
+        title.to_string()
+    };
+    mol.id = mol.name.clone();
+
+    let (logical_lines, sd_start) = unfold_v3000_lines(lines, 4);
+    let mut block_stack: Vec<String> = Vec::new();
+    let mut raw_atoms: Vec<Atom> = Vec::new();
+    let mut raw_bonds: Vec<(usize, usize, u8)> = Vec::new();
+    let mut atom_id_to_idx: HashMap<usize, usize> = HashMap::new();
+    let mut has_nonzero_coords = false;
+    let mut expected_atoms: Option<usize> = None;
+    let mut expected_bonds: Option<usize> = None;
+
+    for line in &logical_lines {
+        let toks = tokenize_v3000_line(line);
+        if toks.is_empty() {
+            continue;
+        }
+        let head = toks[0].to_ascii_uppercase();
+        if head == "BEGIN" {
+            let blk = toks.get(1).map(|s| s.to_ascii_uppercase()).unwrap_or_default();
+            block_stack.push(blk);
+            continue;
+        }
+        if head == "END" {
+            let blk = toks.get(1).map(|s| s.to_ascii_uppercase()).unwrap_or_default();
+            if block_stack.last().map(|s| s.as_str()) == Some(blk.as_str()) {
+                block_stack.pop();
+            } else {
+                block_stack.pop();
+            }
+            continue;
+        }
+
+        let cur_block = block_stack.last().map(|s| s.as_str()).unwrap_or("");
+        match cur_block {
+            "CTAB" => {
+                if head == "COUNTS" {
+                    if let (Some(na), Some(nb)) = (
+                        toks.get(1).and_then(|s| s.parse::<usize>().ok()),
+                        toks.get(2).and_then(|s| s.parse::<usize>().ok()),
+                    ) {
+                        expected_atoms = Some(na);
+                        expected_bonds = Some(nb);
+                    }
+                }
+            }
+            "ATOM" => {
+                if toks.len() < 6 {
+                    return Err(MolIoError::InvalidSdf(format!(
+                        "Malformed V3000 ATOM line: {line}"
+                    )));
+                }
+                let atom_id: usize = toks[0].parse().map_err(|_| {
+                    MolIoError::InvalidSdf(format!("Invalid V3000 atom ID '{}'", toks[0]))
+                })?;
+                let sym = &toks[1];
+                let x: f32 = toks[2].parse().unwrap_or(0.0);
+                let y: f32 = toks[3].parse().unwrap_or(0.0);
+                let _z: f32 = toks[4].parse().unwrap_or(0.0);
+                if x.abs() > 1e-4 || y.abs() > 1e-4 {
+                    has_nonzero_coords = true;
+                }
+                let elem = parse_sdf_element(sym);
+                let mut charge: i8 = 0;
+                let mut chiral: i8 = 0;
+                let mut explicit_h: u8 = 0;
+                let mut bracketed = false;
+
+                for prop in &toks[6..] {
+                    if let Some((k, v)) = prop.split_once('=') {
+                        match k.to_ascii_uppercase().as_str() {
+                            "CHG" => {
+                                if let Ok(c) = v.parse::<i32>() {
+                                    charge = c.clamp(-4, 4) as i8;
+                                    if charge != 0 {
+                                        bracketed = true;
+                                    }
+                                }
+                            }
+                            "CFG" => {
+                                if let Ok(cfg) = v.parse::<i8>() {
+                                    chiral = match cfg {
+                                        1 => 1,
+                                        2 => 2,
+                                        _ => 0,
+                                    };
+                                }
+                            }
+                            "HCOUNT" => {
+                                if let Ok(hc) = v.parse::<i32>() {
+                                    if hc > 0 {
+                                        explicit_h = explicit_h.max(hc.min(8) as u8);
+                                    } else if hc < 0 {
+                                        bracketed = true;
+                                    }
+                                }
+                            }
+                            "VAL" => {
+                                if let Ok(val) = v.parse::<i32>() {
+                                    if val == -1 {
+                                        bracketed = true;
+                                    }
+                                }
+                            }
+                            "MASS" => {
+                                let _ = v.parse::<i32>();
+                            }
+                            "RAD" => {
+                                if let Ok(rad) = v.parse::<i32>() {
+                                    if rad > 0 {
+                                        bracketed = true;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                let idx = raw_atoms.len();
+                atom_id_to_idx.insert(atom_id, idx);
+                raw_atoms.push(Atom {
+                    idx,
+                    elem,
+                    charge,
+                    aromatic: false,
+                    bracketed,
+                    explicit_h,
+                    implicit_h: 0,
+                    chiral,
+                    in_ring: false,
+                    ring_sizes: Vec::new(),
+                    hyb: Hybridization::Sp3,
+                    pos2d: [x, y],
+                });
+            }
+            "BOND" => {
+                if toks.len() < 4 {
+                    return Err(MolIoError::InvalidSdf(format!(
+                        "Malformed V3000 BOND line: {line}"
+                    )));
+                }
+                let _bond_id: usize = toks[0].parse().map_err(|_| {
+                    MolIoError::InvalidSdf(format!("Invalid V3000 bond ID '{}'", toks[0]))
+                })?;
+                let btype_raw: u8 = toks[1].parse().unwrap_or(1);
+                let btype = if (1..=4).contains(&btype_raw) {
+                    btype_raw
+                } else {
+                    1
+                };
+                let a1_id: usize = toks[2].parse().map_err(|_| {
+                    MolIoError::InvalidSdf(format!("Invalid V3000 bond atom1 '{}'", toks[2]))
+                })?;
+                let a2_id: usize = toks[3].parse().map_err(|_| {
+                    MolIoError::InvalidSdf(format!("Invalid V3000 bond atom2 '{}'", toks[3]))
+                })?;
+                if let (Some(&u), Some(&v)) = (atom_id_to_idx.get(&a1_id), atom_id_to_idx.get(&a2_id)) {
+                    raw_bonds.push((u, v, btype));
+                } else {
+                    return Err(MolIoError::InvalidSdf(format!(
+                        "V3000 bond references unknown atom ID ({a1_id}, {a2_id})"
+                    )));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if raw_atoms.is_empty() {
+        return Err(MolIoError::InvalidSdf(
+            "V3000 CTAB contains no atoms".to_string(),
+        ));
+    }
+    if let Some(na) = expected_atoms {
+        if na > 0 && raw_atoms.len() != na {
+            return Err(MolIoError::InvalidSdf(format!(
+                "V3000 atom count mismatch: COUNTS={na}, parsed={}",
+                raw_atoms.len()
+            )));
+        }
+    }
+    if let Some(nb) = expected_bonds {
+        if nb > 0 && raw_bonds.len() != nb {
+            return Err(MolIoError::InvalidSdf(format!(
+                "V3000 bond count mismatch: COUNTS={nb}, parsed={}",
+                raw_bonds.len()
+            )));
+        }
+    }
+
+    for line_idx in sd_start..lines.len() {
+        if lines[line_idx].trim_start().starts_with('>') {
+            parse_sd_tag_at(lines, line_idx, &mut mol);
+        }
+    }
+
+    Ok(finalize_sdf_molecule(
+        mol,
+        raw_atoms,
+        raw_bonds,
+        has_nonzero_coords,
+    ))
 }
 
 /// Formats a single `Molecule` as a valid MDL V2000 `.sdf` record (ending with `$$$$`).
@@ -857,4 +1191,237 @@ pub fn format_sdf_dataset(mols: &[Molecule]) -> String {
         out.push_str(&format_sdf_record(m));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evaluate_physchem;
+    use crate::fingerprint::compute_ecfp;
+    use crate::DatasetAnalysis;
+
+    #[test]
+    fn test_v3000_sdf_parsing_properties_continuations_and_v2000_equivalence() {
+        // Record 1: Aspirin-like ester carboxylate anion in V3000 with non-contiguous atom IDs,
+        // line continuation '-', CHG=-1, CFG=1, MASS=13, explicit H folding, and SD tags (no SMILES tag).
+        let v3000_sdf = "\
+V3000_Test_Compounds
+  sar-atlas  2D
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 9 8 0 0 0
+M  V30 BEGIN ATOM
+M  V30 10 C 0.0000 0.0000 0.0000 0 MASS=13 CFG=1
+M  V30 20 C 1.5000 0.0000 0.0000 0
+M  V30 30 O 2.2500 1.2990 0.0000 0
+M  V30 40 O 2.2500 -1.2990 0.0000 0 -
+M  V30 CHG=-1
+M  V30 50 N -0.7500 1.2990 0.0000 0 CHG=1
+M  V30 60 C -0.7500 -1.2990 0.0000 0
+M  V30 70 H -1.5000 1.7320 0.0000 0
+M  V30 80 H -0.7500 2.1650 0.0000 0
+M  V30 90 H 0.0000 1.7320 0.0000 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 1 10 20
+M  V30 2 2 20 30
+M  V30 3 1 20 40
+M  V30 4 1 10 50 CFG=1
+M  V30 5 1 10 60
+M  V30 6 1 50 70
+M  V30 7 1 50 80
+M  V30 8 1 50 90
+M  V30 END BOND
+M  V30 BEGIN COLLECTION
+M  V30 MDLV30/STEABS ATOMS=(1 10)
+M  V30 END COLLECTION
+M  V30 END CTAB
+M  END
+> <ID>
+ALANINE-ZWIT
+
+> <TARGET>
+LAT1
+
+> <RAW_NM>
+100.0
+
+$$$$
+Benzene_V3000
+  sar-atlas  2D
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 6 6 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 1.2990 0.7500 0.0000 0
+M  V30 2 C 1.2990 -0.7500 0.0000 0
+M  V30 3 C 0.0000 -1.5000 0.0000 0
+M  V30 4 C -1.2990 -0.7500 0.0000 0
+M  V30 5 C -1.2990 0.7500 0.0000 0
+M  V30 6 C 0.0000 1.5000 0.0000 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 4 1 2
+M  V30 2 4 2 3
+M  V30 3 4 3 4
+M  V30 4 4 4 5
+M  V30 5 4 5 6
+M  V30 6 4 6 1
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+> <ID>
+BENZ-V3000
+
+> <PACT>
+5.50
+
+$$$$
+";
+        let mols = parse_sdf_dataset(v3000_sdf).expect("V3000 SDF must parse");
+        assert_eq!(mols.len(), 2);
+
+        let ala = &mols[0];
+        assert_eq!(ala.id, "ALANINE-ZWIT");
+        assert_eq!(ala.target, "LAT1");
+        assert!((ala.pact - 7.0).abs() < 1e-3);
+        // 6 heavy atoms (3 explicit H folded onto N atom 50)
+        assert_eq!(ala.atoms.len(), 6);
+        assert_eq!(ala.atoms[0].chiral, 1);
+        assert_eq!(ala.atoms[3].charge, -1);
+        assert_eq!(ala.atoms[4].charge, 1);
+        assert_eq!(ala.atoms[4].explicit_h, 3);
+        assert!(!ala.smiles.is_empty(), "Fallback SMILES must be populated");
+
+        let benz = &mols[1];
+        assert_eq!(benz.id, "BENZ-V3000");
+        assert_eq!(benz.atoms.len(), 6);
+        assert!(benz.atoms.iter().all(|a| a.aromatic));
+        assert!(benz.bonds.iter().all(|b| b.order == BondOrder::Aromatic));
+        assert!(!benz.smiles.is_empty());
+
+        // Compare formula, MW, and ECFP4 against SMILES benzene
+        let benz_smi = parse_smiles("c1ccccc1").unwrap();
+        let prof_v3000 = evaluate_physchem(benz, 0);
+        let prof_smi = evaluate_physchem(&benz_smi, 0);
+        assert_eq!(prof_v3000.formula, prof_smi.formula);
+        assert!((prof_v3000.mw - prof_smi.mw).abs() < 1e-3);
+        let fp1 = compute_ecfp(benz, 2);
+        let fp2 = compute_ecfp(&benz_smi, 2);
+        assert!((fp1.tanimoto(&fp2) - 1.0).abs() < 1e-6);
+
+        // Verify DatasetAnalysis::from_file detects V3000 even without .sdf extension
+        let tmp_path = std::env::temp_dir().join("sar_atlas_v3000_test.txt");
+        std::fs::write(&tmp_path, v3000_sdf).unwrap();
+        let ds = DatasetAnalysis::from_file(&tmp_path, 0.30, 6.0)
+            .expect("DatasetAnalysis::from_file must detect V3000");
+        let _ = std::fs::remove_file(&tmp_path);
+        assert_eq!(ds.mols.len(), 2);
+        assert_eq!(ds.mols[0].id, "ALANINE-ZWIT");
+        assert_eq!(ds.mols[1].id, "BENZ-V3000");
+    }
+
+    #[test]
+    fn test_v3000_hcount_plus_explicit_bonded_h_does_not_double_count_lf_and_crlf() {
+        // Alanine zwitterion where atom 500 (N) carries both CHG=1 HCOUNT=3 AND 3 explicit bonded H atoms,
+        // plus chained '-' line continuations and no > <SMILES> tag.
+        let lf_sdf = "\
+AdvMol_NoTags
+  sar-atlas  2D
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 9 8 0 0 0
+M  V30 BEGIN ATOM
+M  V30 100 C 0.0000 0.0000 0.0000 0 -
+M  V30 MASS=13 -
+M  V30 CFG=1
+M  V30 200 C 1.5000 0.0000 0.0000 0
+M  V30 300 O 2.2500 1.2990 0.0000 0
+M  V30 400 O 2.2500 -1.2990 0.0000 0 CHG=-1
+M  V30 500 N -0.7500 1.2990 0.0000 0 CHG=1 HCOUNT=3
+M  V30 600 C -0.7500 -1.2990 0.0000 0
+M  V30 700 H -1.5000 1.7320 0.0000 0
+M  V30 800 H -0.7500 2.1650 0.0000 0
+M  V30 900 H 0.0000 1.7320 0.0000 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 1 100 200
+M  V30 2 2 200 300
+M  V30 3 1 200 400
+M  V30 4 1 100 500 CFG=1
+M  V30 5 1 100 600
+M  V30 6 1 500 700
+M  V30 7 1 500 800
+M  V30 8 1 500 900
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+> <PACT>
+6.75
+
+$$$$
+";
+        let crlf_sdf = lf_sdf.replace('\n', "\r\n");
+
+        for (label, text) in [("LF", lf_sdf), ("CRLF", crlf_sdf.as_str())] {
+            let mols = parse_sdf_dataset(text)
+                .unwrap_or_else(|e| panic!("{label} V3000 SDF must parse: {e}"));
+            assert_eq!(mols.len(), 1, "{label}");
+            let m = &mols[0];
+            assert_eq!(m.atoms.len(), 6, "{label}: heavy atoms only");
+            assert_eq!(m.atoms[4].charge, 1, "{label}: N+ charge");
+            assert_eq!(
+                m.atoms[4].explicit_h, 3,
+                "{label}: HCOUNT=3 + 3 bonded H must resolve to 3, not 6"
+            );
+            assert_eq!(m.atoms[4].total_h(), 3, "{label}: total_h on [NH3+]");
+            let prof = evaluate_physchem(m, 0);
+            assert_eq!(prof.formula, "C3H7NO2", "{label}: exact alanine formula");
+            assert!(
+                m.smiles.contains("[NH3+]"),
+                "{label}: expected [NH3+] in SMILES, got {}",
+                m.smiles
+            );
+            assert!(
+                !m.smiles.contains("[NH6+]"),
+                "{label}: must not emit hypervalent [NH6+], got {}",
+                m.smiles
+            );
+        }
+
+        // Also verify HCOUNT=3 with 0 explicit bonded H atoms still yields [NH3+] and C3H7NO2
+        let hcount_only_sdf = "\
+AdvMol_HcountOnly
+  sar-atlas  2D
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 6 5 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0.0000 0.0000 0.0000 0
+M  V30 2 C 1.5000 0.0000 0.0000 0
+M  V30 3 O 2.2500 1.2990 0.0000 0
+M  V30 4 O 2.2500 -1.2990 0.0000 0 CHG=-1
+M  V30 5 N -0.7500 1.2990 0.0000 0 CHG=1 HCOUNT=3
+M  V30 6 C -0.7500 -1.2990 0.0000 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 1 1 2
+M  V30 2 2 2 3
+M  V30 3 1 2 4
+M  V30 4 1 1 5
+M  V30 5 1 1 6
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+$$$$
+";
+        let mols_hc = parse_sdf_dataset(hcount_only_sdf).expect("HCOUNT-only V3000 must parse");
+        assert_eq!(mols_hc[0].atoms[4].explicit_h, 3);
+        assert_eq!(evaluate_physchem(&mols_hc[0], 0).formula, "C3H7NO2");
+        assert!(mols_hc[0].smiles.contains("[NH3+]"));
+    }
 }
