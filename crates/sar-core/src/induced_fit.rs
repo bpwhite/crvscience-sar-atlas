@@ -817,7 +817,7 @@ pub fn build_receptor_ensemble(
                 a.pos[0] += dx;
                 a.pos[1] += dy;
                 a.pos[2] += dz;
-                sq_disp += ((dx * dx + dy * dy + dz * dz) as f64);
+                sq_disp += (dx * dx + dy * dy + dz * dz) as f64;
             }
         }
 

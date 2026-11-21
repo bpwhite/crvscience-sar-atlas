@@ -1053,7 +1053,6 @@ pub struct SarAtlasGuiApp {
     funnel_ledger_db_buf: String,
     funnel_ledger_rows: Vec<PipelineRunLedgerEntry>,
     funnel_export_cands_buf: String,
-    funnel_export_stages_buf: String,
     funnel_export_sdf_buf: String,
 
     // Sub-Pocket Fragment Linker & Super-Additivity Studio state (v3.8.0)
@@ -1610,7 +1609,6 @@ impl SarAtlasGuiApp {
             funnel_ledger_db_buf: "sar_atlas_pipeline_ledger.sqlite".to_string(),
             funnel_ledger_rows: Vec::new(),
             funnel_export_cands_buf: "discovery_funnel_candidates_v310.csv".to_string(),
-            funnel_export_stages_buf: "discovery_funnel_stages_v310.csv".to_string(),
             funnel_export_sdf_buf: "discovery_promoted_survivors_v310.sdf".to_string(),
             flink_cfg: FragmentLinkerConfig::default(),
             flink_use_sketcher: false,
@@ -1935,6 +1933,29 @@ impl SarAtlasGuiApp {
                 self.ingest_rx = None;
                 self.ingest_busy_label = None;
                 self.status_banner = "Background REST import worker disconnected.".to_string();
+            }
+        }
+    }
+
+    fn load_smiles_into_sketcher(&mut self, smi: &str, label: &str, switch_tab: bool) -> bool {
+        match self.sketcher.load_from_smiles(smi) {
+            Ok(()) => {
+                self.sketch_smiles_bar = smi.to_string();
+                self.sketch_smiles_error = None;
+                self.sketch_pan = molecule_centroid(&self.sketcher.mol);
+                self.sketch_cached_rev = 0;
+                self.refresh_sketch_report();
+                if switch_tab {
+                    self.navigate_to_tab(WorkbenchTab::Sketcher);
+                }
+                self.status_banner = format!("Loaded {label} into 2D Sketcher: {smi}");
+                true
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                self.sketch_smiles_error = Some(msg.clone());
+                self.status_banner = format!("Failed to load {label} into 2D Sketcher: {msg}");
+                false
             }
         }
     }
@@ -2802,8 +2823,9 @@ impl SarAtlasGuiApp {
         }
 
         if self.about_open {
+            let mut open = self.about_open;
             egui::Window::new("About SAR-Atlas")
-                .open(&mut self.about_open)
+                .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -2820,7 +2842,14 @@ impl SarAtlasGuiApp {
                         ui.separator();
                         ui.hyperlink_to("https://crvscience.com/apps", "https://crvscience.com/apps");
                     });
+                    ui.add_space(8.0);
+                    if ui.button("Close").clicked() {
+                        self.about_open = false;
+                    }
                 });
+            if !open {
+                self.about_open = false;
+            }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| match self.active_tab {
@@ -4170,7 +4199,7 @@ impl SarAtlasGuiApp {
                     .show(ui, |ui| {
                         if let Some(ref pd) = rep.parent_delta {
                             egui::Frame::group(ui.style())
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(56, 189, 248)))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)))
                                 .show(ui, |ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         ui.colored_label(
@@ -4529,7 +4558,7 @@ impl SarAtlasGuiApp {
             rect,
             6.0,
             bg,
-            Stroke::new(1.0, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)),
             egui::StrokeKind::Inside,
         );
 
@@ -4542,7 +4571,7 @@ impl SarAtlasGuiApp {
         while gx <= rect.right() {
             painter.line_segment(
                 [Pos2::new(gx, rect.top()), Pos2::new(gx, rect.bottom())],
-                Stroke::new(1.0, grid_col),
+                Stroke::new(1.0_f32, grid_col),
             );
             gx += step_px;
         }
@@ -4553,7 +4582,7 @@ impl SarAtlasGuiApp {
         while gy <= rect.bottom() {
             painter.line_segment(
                 [Pos2::new(rect.left(), gy), Pos2::new(rect.right(), gy)],
-                Stroke::new(1.0, grid_col),
+                Stroke::new(1.0_f32, grid_col),
             );
             gy += step_px;
         }
@@ -4829,7 +4858,7 @@ impl SarAtlasGuiApp {
             if let Some(ref fw) = rep.free_wilson {
                 let core_fill = Color32::from_rgba_unmultiplied(56, 189, 248, 48);
                 let core_ring =
-                    Stroke::new(1.2, Color32::from_rgba_unmultiplied(56, 189, 248, 160));
+                    Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 160));
                 for &ai in &fw.core_atoms {
                     if let Some(a) = self.sketcher.mol.atoms.get(ai) {
                         clipped.circle(to_screen(a.pos2d), zoom * 0.34, core_fill, core_ring);
@@ -4856,7 +4885,7 @@ impl SarAtlasGuiApp {
                     SketchTool::Ring(_) => Color32::from_rgba_unmultiplied(52, 211, 153, 140),
                     _ => Color32::from_rgba_unmultiplied(56, 189, 248, 120),
                 };
-                clipped.line_segment([p1, p2], Stroke::new(9.5, hcol));
+                clipped.line_segment([p1, p2], Stroke::new(9.5_f32, hcol));
             }
         }
         if let Some(u) = hovered_atom {
@@ -4870,7 +4899,7 @@ impl SarAtlasGuiApp {
                     to_screen(a.pos2d),
                     (zoom * 0.38).clamp(9.0, 18.0),
                     Color32::from_rgba_unmultiplied(hcol.r(), hcol.g(), hcol.b(), 40),
-                    Stroke::new(1.8, hcol),
+                    Stroke::new(1.8_f32, hcol),
                 );
             }
         }
@@ -4899,12 +4928,12 @@ impl SarAtlasGuiApp {
                         };
                         clipped.line_segment(
                             [p_start, p_end],
-                            Stroke::new(2.4, Color32::from_rgb(56, 189, 248)),
+                            Stroke::new(2.4_f32, Color32::from_rgb(56, 189, 248)),
                         );
                         clipped.circle_stroke(
                             p_end,
                             7.0,
-                            Stroke::new(1.8, Color32::from_rgb(52, 211, 153)),
+                            Stroke::new(1.8_f32, Color32::from_rgb(52, 211, 153)),
                         );
                     }
                 }
@@ -4969,14 +4998,14 @@ impl SarAtlasGuiApp {
         painter.add(egui::Shape::convex_polygon(
             white_pts,
             Color32::from_rgba_unmultiplied(241, 245, 249, 34),
-            Stroke::new(1.3, Color32::from_rgba_unmultiplied(226, 232, 240, 115)),
+            Stroke::new(1.3_f32, Color32::from_rgba_unmultiplied(226, 232, 240, 115)),
         ));
 
         let yolk_pts = build_ellipse(38.12, 3.07, 41.00, 2.70, -6.0);
         painter.add(egui::Shape::convex_polygon(
             yolk_pts,
             Color32::from_rgba_unmultiplied(250, 204, 21, 52),
-            Stroke::new(1.5, Color32::from_rgb(250, 204, 21)),
+            Stroke::new(1.5_f32, Color32::from_rgb(250, 204, 21)),
         ));
 
         painter.text(
@@ -5004,13 +5033,13 @@ impl SarAtlasGuiApp {
                     pt,
                     r,
                     Color32::from_rgba_unmultiplied(56, 189, 248, 80),
-                    Stroke::new(2.0, Color32::from_rgb(56, 189, 248)),
+                    Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)),
                 );
             } else {
                 painter.circle_filled(pt, r, Color32::from_rgb(248, 113, 113));
             }
             if self.selected_mol == i {
-                painter.circle_stroke(pt, r + 2.5, Stroke::new(1.8, Color32::WHITE));
+                painter.circle_stroke(pt, r + 2.5, Stroke::new(1.8_f32, Color32::WHITE));
             }
 
             if let Some(hp) = hover_p {
@@ -5226,13 +5255,15 @@ impl SarAtlasGuiApp {
         });
 
         if let Some(m) = send_to_sketch {
-            let _ = self.sketcher.load_from_smiles(&m.smiles);
-            self.sketcher.mol.name = m.name;
-            self.sketcher.mol.target = m.target;
-            self.sketch_pan = molecule_centroid(&self.sketcher.mol);
-            self.sketch_cached_rev = 0;
-            self.refresh_sketch_report();
-            self.active_tab = WorkbenchTab::Sketcher;
+            let label = if m.name.trim().is_empty() {
+                "selected compound"
+            } else {
+                m.name.as_str()
+            };
+            if self.load_smiles_into_sketcher(&m.smiles, label, true) {
+                self.sketcher.mol.name = m.name;
+                self.sketcher.mol.target = m.target;
+            }
         }
         if let Some(m) = commit_mol {
             let new_idx = self.ds.push_sketched_molecule(m);
@@ -5441,7 +5472,7 @@ impl SarAtlasGuiApp {
                                             5.0,
                                             fill,
                                             Stroke::new(
-                                                if self.selected_mol == mi { 2.2 } else { 1.0 },
+                                                if self.selected_mol == mi { 2.2 } else { 1.0_f32 },
                                                 stroke_col,
                                             ),
                                             egui::StrokeKind::Inside,
@@ -5487,7 +5518,7 @@ impl SarAtlasGuiApp {
                                             rect,
                                             5.0,
                                             bg,
-                                            Stroke::new(1.0, border),
+                                            Stroke::new(1.0_f32, border),
                                             egui::StrokeKind::Inside,
                                         );
                                         painter.text(
@@ -5915,7 +5946,7 @@ impl SarAtlasGuiApp {
 
                         egui::Frame::group(ui.style())
                             .stroke(Stroke::new(
-                                if self.selected_mol == mi { 2.0 } else { 1.0 },
+                                if self.selected_mol == mi { 2.0 } else { 1.0_f32 },
                                 if self.selected_mol == mi {
                                     Color32::from_rgb(56, 189, 248)
                                 } else if !sm_atoms.is_empty() {
@@ -6208,7 +6239,7 @@ fn paint_skeletal_primitives<F: Fn([f32; 2]) -> Pos2>(
     scale: f32,
     bg: Color32,
 ) {
-    let bond_stroke = Stroke::new(1.85, Color32::from_rgb(203, 213, 225));
+    let bond_stroke = Stroke::new(1.85_f32, Color32::from_rgb(203, 213, 225));
     for b in &mol.bonds {
         let p1 = to_screen(mol.atoms[b.a].pos2d);
         let p2 = to_screen(mol.atoms[b.b].pos2d);
@@ -6339,7 +6370,7 @@ fn paint_molecule_2d(
     }
 
     let smarts_fill = Color32::from_rgba_unmultiplied(56, 189, 248, 72);
-    let smarts_ring = Stroke::new(1.25, Color32::from_rgb(56, 189, 248));
+    let smarts_ring = Stroke::new(1.25_f32, Color32::from_rgb(56, 189, 248));
     for &ai in smarts_atoms {
         if let Some(a) = mol.atoms.get(ai) {
             let pt = to_screen(a.pos2d);
@@ -6757,7 +6788,7 @@ fn paint_molecule_pharmacophore_2d(
             center,
             rad,
             Color32::from_rgba_unmultiplied(r, g, b, 46),
-            Stroke::new(1.35, Color32::from_rgba_unmultiplied(r, g, b, 210)),
+            Stroke::new(1.35_f32, Color32::from_rgba_unmultiplied(r, g, b, 210)),
         );
     }
 
@@ -6777,7 +6808,7 @@ fn paint_molecule_pharmacophore_2d(
             painter.add(egui::Shape::convex_polygon(
                 vec![s0, s1, s2],
                 Color32::from_rgba_unmultiplied(251, 191, 36, 28),
-                Stroke::new(2.1, Color32::from_rgba_unmultiplied(251, 191, 36, 225)),
+                Stroke::new(2.1_f32, Color32::from_rgba_unmultiplied(251, 191, 36, 225)),
             ));
 
             for (pa, pb, bdist) in [
@@ -6791,7 +6822,7 @@ fn paint_molecule_pharmacophore_2d(
                     pill,
                     4.0,
                     Color32::from_rgba_unmultiplied(15, 23, 42, 232),
-                    Stroke::new(1.0, Color32::from_rgb(251, 191, 36)),
+                    Stroke::new(1.0_f32, Color32::from_rgb(251, 191, 36)),
                     egui::StrokeKind::Inside,
                 );
                 painter.text(
@@ -6811,7 +6842,7 @@ fn paint_molecule_pharmacophore_2d(
                     brect,
                     3.5,
                     Color32::from_rgba_unmultiplied(15, 23, 42, 238),
-                    Stroke::new(1.1, Color32::from_rgb(r, g, b)),
+                    Stroke::new(1.1_f32, Color32::from_rgb(r, g, b)),
                     egui::StrokeKind::Inside,
                 );
                 painter.text(
@@ -7115,7 +7146,7 @@ impl SarAtlasGuiApp {
                         for (si, syn) in retro.synthons.iter().enumerate() {
                             let [cr, cg, cb] = synthon_palette_rgb(si);
                             egui::Frame::group(ui.style())
-                                .stroke(Stroke::new(1.5, Color32::from_rgb(cr, cg, cb)))
+                                .stroke(Stroke::new(1.5_f32, Color32::from_rgb(cr, cg, cb)))
                                 .show(ui, |ui| {
                                     ui.set_width(card_w);
                                     ui.horizontal_wrapped(|ui| {
@@ -7367,7 +7398,7 @@ fn paint_molecule_brics_2d(
                 painter.circle_stroke(
                     to_screen(a.pos2d),
                     (scale * 0.48).clamp(7.0, 14.0),
-                    Stroke::new(1.5, Color32::from_rgb(248, 113, 113)),
+                    Stroke::new(1.5_f32, Color32::from_rgb(248, 113, 113)),
                 );
             }
         }
@@ -7396,7 +7427,7 @@ fn paint_molecule_brics_2d(
         } else {
             Color32::from_rgb(148, 163, 184)
         };
-        let stroke = Stroke::new(if cut.selected_in_tree { 2.1 } else { 1.3 }, col);
+        let stroke = Stroke::new(if cut.selected_in_tree { 2.1 } else { 1.3_f32 }, col);
 
         let c_a = mid - unit * gap;
         let c_b = mid + unit * gap;
@@ -7410,7 +7441,7 @@ fn paint_molecule_brics_2d(
                 pill,
                 3.5,
                 Color32::from_rgba_unmultiplied(15, 23, 42, 236),
-                Stroke::new(1.0, col),
+                Stroke::new(1.0_f32, col),
                 egui::StrokeKind::Inside,
             );
             painter.text(
@@ -8008,7 +8039,7 @@ fn paint_hybrid_chimera_2d(
                 pill,
                 3.5,
                 Color32::from_rgba_unmultiplied(15, 23, 42, 238),
-                Stroke::new(1.1, Color32::from_rgb(251, 191, 36)),
+                Stroke::new(1.1_f32, Color32::from_rgb(251, 191, 36)),
                 egui::StrokeKind::Inside,
             );
             painter.text(
@@ -8309,7 +8340,7 @@ impl SarAtlasGuiApp {
                             let is_sel = self.selected_mol == mem.mol_idx;
                             egui::Frame::group(ui.style())
                                 .stroke(Stroke::new(
-                                    if is_sel { 2.0 } else { 1.0 },
+                                    if is_sel { 2.0 } else { 1.0_f32 },
                                     if is_sel {
                                         Color32::from_rgb(56, 189, 248)
                                     } else {
@@ -8554,7 +8585,7 @@ fn paint_aligned_mcs_member_2d(
                 pill,
                 3.0,
                 Color32::from_rgba_unmultiplied(15, 23, 42, 235),
-                Stroke::new(1.0, Color32::from_rgb(251, 191, 36)),
+                Stroke::new(1.0_f32, Color32::from_rgb(251, 191, 36)),
                 egui::StrokeKind::Inside,
             );
             painter.text(
@@ -8923,7 +8954,7 @@ impl SarAtlasGuiApp {
                             egui::Frame::canvas(ui.style())
                                 .inner_margin(egui::Margin::same(6))
                                 .stroke(Stroke::new(
-                                    if pr.rank == 1 { 1.6 } else { 1.0 },
+                                    if pr.rank == 1 { 1.6 } else { 1.0_f32 },
                                     Color32::from_rgb(badge_rgb[0], badge_rgb[1], badge_rgb[2]),
                                 ))
                                 .show(ui, |ui| {
@@ -9018,7 +9049,7 @@ impl SarAtlasGuiApp {
                             };
                             egui::Frame::canvas(ui.style())
                                 .inner_margin(egui::Margin::same(6))
-                                .stroke(Stroke::new(if tau.rank == 1 { 1.6 } else { 1.0 }, border_col))
+                                .stroke(Stroke::new(if tau.rank == 1 { 1.6 } else { 1.0_f32 }, border_col))
                                 .show(ui, |ui| {
                                     ui.set_width(232.0);
                                     ui.colored_label(
@@ -9257,7 +9288,7 @@ fn paint_molecule_pka_sites_2d(
             painter.circle_stroke(
                 sp,
                 (scale * 0.48).clamp(7.0, 14.0),
-                Stroke::new(1.5, Color32::from_rgb(r, g, b)),
+                Stroke::new(1.5_f32, Color32::from_rgb(r, g, b)),
             );
         }
     }
@@ -9286,7 +9317,7 @@ fn paint_molecule_pka_sites_2d(
                 pill,
                 3.5,
                 Color32::from_rgba_unmultiplied(15, 23, 42, 238),
-                Stroke::new(1.0, Color32::from_rgb(r, g, b)),
+                Stroke::new(1.0_f32, Color32::from_rgb(r, g, b)),
                 egui::StrokeKind::Inside,
             );
             let tag = match s.kind {
@@ -9348,7 +9379,7 @@ fn paint_pka_speciation_curve(
     );
 
     // X-axis pH gridlines (0, 2, 4, 6, 7.4, 8, 10, 12, 14)
-    let grid_stroke = Stroke::new(1.0, Color32::from_rgb(30, 41, 59));
+    let grid_stroke = Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59));
     for ph_tick in [0, 2, 4, 6, 8, 10, 12, 14] {
         let x = ph_to_x(ph_tick as f32);
         painter.line_segment(
@@ -9375,7 +9406,7 @@ fn paint_pka_speciation_curve(
     let x74 = ph_to_x(7.4);
     painter.line_segment(
         [Pos2::new(x74, plot.top()), Pos2::new(x74, plot.bottom())],
-        Stroke::new(1.1, Color32::from_rgba_unmultiplied(52, 211, 153, 120)),
+        Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(52, 211, 153, 120)),
     );
     painter.text(
         Pos2::new(x74, plot.top() - 9.0),
@@ -9389,7 +9420,7 @@ fn paint_pka_speciation_curve(
         let x_pi = ph_to_x(pi as f32);
         painter.line_segment(
             [Pos2::new(x_pi, plot.top()), Pos2::new(x_pi, plot.bottom())],
-            Stroke::new(1.1, Color32::from_rgba_unmultiplied(250, 204, 21, 150)),
+            Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(250, 204, 21, 150)),
         );
         painter.text(
             Pos2::new(x_pi, plot.top() + 8.0),
@@ -9450,7 +9481,7 @@ fn paint_pka_speciation_curve(
         if pts.len() >= 2 {
             painter.add(egui::Shape::line(
                 pts,
-                Stroke::new(2.4, Color32::from_rgb(56, 189, 248)),
+                Stroke::new(2.4_f32, Color32::from_rgb(56, 189, 248)),
             ));
         }
 
@@ -9500,7 +9531,7 @@ fn paint_pka_speciation_curve(
             if pts.len() >= 2 {
                 painter.add(egui::Shape::line(
                     pts,
-                    Stroke::new(if pi == 0 { 2.4 } else { 1.75 }, Color32::from_rgb(r, g, b)),
+                    Stroke::new(if pi == 0 { 2.4 } else { 1.75_f32 }, Color32::from_rgb(r, g, b)),
                 ));
             }
         }
@@ -9529,7 +9560,7 @@ fn paint_pka_speciation_curve(
             let mid = Pos2::new((seg[0].x + seg[1].x) * 0.5, (seg[0].y + seg[1].y) * 0.5);
             painter.line_segment(
                 [seg[0], mid],
-                Stroke::new(1.3, Color32::from_rgba_unmultiplied(248, 250, 252, 185)),
+                Stroke::new(1.3_f32, Color32::from_rgba_unmultiplied(248, 250, 252, 185)),
             );
         }
     }
@@ -9538,13 +9569,13 @@ fn paint_pka_speciation_curve(
     let x_cur = ph_to_x(rep.target_ph as f32);
     painter.line_segment(
         [Pos2::new(x_cur, plot.top()), Pos2::new(x_cur, plot.bottom())],
-        Stroke::new(1.6, Color32::from_rgb(56, 189, 248)),
+        Stroke::new(1.6_f32, Color32::from_rgb(56, 189, 248)),
     );
     painter.rect(
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 }
@@ -10491,7 +10522,7 @@ fn paint_3d_molecular_viewport(
                     pos,
                     radius,
                     Stroke::new(
-                        if is_hit { 1.0 } else { 1.35 },
+                        if is_hit { 1.0 } else { 1.35_f32 },
                         Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 145),
                     ),
                 );
@@ -10568,7 +10599,7 @@ fn paint_3d_molecular_viewport(
     ] {
         let rc = rot_cam(axis_vec);
         let tip = Pos2::new(gizmo_o.x + rc[0] * 20.0, gizmo_o.y - rc[1] * 20.0);
-        painter.line_segment([gizmo_o, tip], Stroke::new(1.8, col));
+        painter.line_segment([gizmo_o, tip], Stroke::new(1.8_f32, col));
         painter.text(
             Pos2::new(gizmo_o.x + rc[0] * 26.0, gizmo_o.y - rc[1] * 26.0),
             egui::Align2::CENTER_CENTER,
@@ -10582,7 +10613,7 @@ fn paint_3d_molecular_viewport(
         rect,
         6.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
 }
@@ -10621,7 +10652,7 @@ fn paint_npr_shape_triangle(
     let v_sph = to_pt(1.0, 1.0);
     let v_disc = to_pt(0.5, 0.5);
 
-    let edge_stroke = Stroke::new(1.4, Color32::from_rgb(71, 85, 105));
+    let edge_stroke = Stroke::new(1.4_f32, Color32::from_rgb(71, 85, 105));
     painter.line_segment([v_rod, v_sph], edge_stroke);
     painter.line_segment([v_sph, v_disc], edge_stroke);
     painter.line_segment([v_disc, v_rod], edge_stroke);
@@ -10664,19 +10695,19 @@ fn paint_npr_shape_triangle(
     if let Some((hn1, hn2)) = hit_npr {
         let hp = to_pt(hn1, hn2);
         painter.circle_filled(hp, 5.5, Color32::from_rgb(244, 114, 182));
-        painter.circle_stroke(hp, 7.5, Stroke::new(1.3, Color32::from_rgb(251, 207, 232)));
+        painter.circle_stroke(hp, 7.5, Stroke::new(1.3_f32, Color32::from_rgb(251, 207, 232)));
     }
 
     // Active Query marker (Cyan)
     let qp = to_pt(query_npr.0, query_npr.1);
     painter.circle_filled(qp, 5.8, Color32::from_rgb(56, 189, 248));
-    painter.circle_stroke(qp, 8.2, Stroke::new(1.5, Color32::from_rgb(224, 242, 254)));
+    painter.circle_stroke(qp, 8.2, Stroke::new(1.5_f32, Color32::from_rgb(224, 242, 254)));
 
     painter.rect(
         rect,
         6.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
 }
@@ -11042,7 +11073,7 @@ impl SarAtlasGuiApp {
                             egui::Frame::canvas(ui.style())
                                 .inner_margin(egui::Margin::same(6))
                                 .stroke(Stroke::new(
-                                    if sw.rank == 1 { 1.7 } else { 1.0 },
+                                    if sw.rank == 1 { 1.7 } else { 1.0_f32 },
                                     Color32::from_rgb(wr, wg, wb),
                                 ))
                                 .show(ui, |ui| {
@@ -11319,11 +11350,11 @@ fn paint_molecule_warhead_2d(
             let [r, g, b] = dw.window.rgb();
             let sp = to_screen(ea.pos2d);
             let col = Color32::from_rgb(r, g, b);
-            painter.circle_stroke(sp, (scale * 0.46).clamp(7.0, 13.0), Stroke::new(1.8, col));
+            painter.circle_stroke(sp, (scale * 0.46).clamp(7.0, 13.0), Stroke::new(1.8_f32, col));
             painter.circle_stroke(
                 sp,
                 (scale * 0.64).clamp(10.0, 17.0),
-                Stroke::new(1.1, Color32::from_rgba_unmultiplied(r, g, b, 150)),
+                Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(r, g, b, 150)),
             );
 
             let pill_pos = Pos2::new(
@@ -11335,7 +11366,7 @@ fn paint_molecule_warhead_2d(
                 pill,
                 3.5,
                 Color32::from_rgba_unmultiplied(15, 23, 42, 240),
-                Stroke::new(1.0, col),
+                Stroke::new(1.0_f32, col),
                 egui::StrokeKind::Inside,
             );
             painter.text(
@@ -11413,7 +11444,7 @@ fn paint_gsh_window_and_kinetics(
         let x = t12_to_x(dw.gsh_half_life_h);
         painter.line_segment(
             [Pos2::new(x, gauge.top() - 3.0), Pos2::new(x, gauge.bottom() + 3.0)],
-            Stroke::new(2.4, Color32::WHITE),
+            Stroke::new(2.4_f32, Color32::WHITE),
         );
     }
 
@@ -11426,7 +11457,7 @@ fn paint_gsh_window_and_kinetics(
         return;
     }
 
-    let grid_stroke = Stroke::new(1.0, Color32::from_rgb(30, 41, 59));
+    let grid_stroke = Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59));
     let t_to_x = |th: f32| -> f32 { plot.left() + (th.clamp(0.0, 24.0) / 24.0) * plot.width() };
     let pct_to_y =
         |pct: f32| -> f32 { plot.bottom() - (pct.clamp(0.0, 100.0) / 100.0) * plot.height() };
@@ -11469,7 +11500,7 @@ fn paint_gsh_window_and_kinetics(
     if occ_pts.len() >= 2 {
         painter.add(egui::Shape::line(
             occ_pts,
-            Stroke::new(2.4, Color32::from_rgb(52, 211, 153)),
+            Stroke::new(2.4_f32, Color32::from_rgb(52, 211, 153)),
         ));
     }
 
@@ -11482,7 +11513,7 @@ fn paint_gsh_window_and_kinetics(
     if gsh_pts.len() >= 2 {
         painter.add(egui::Shape::line(
             gsh_pts,
-            Stroke::new(2.0, Color32::from_rgb(248, 113, 113)),
+            Stroke::new(2.0_f32, Color32::from_rgb(248, 113, 113)),
         ));
     }
 
@@ -11506,7 +11537,7 @@ fn paint_gsh_window_and_kinetics(
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 }
@@ -11918,7 +11949,7 @@ impl SarAtlasGuiApp {
                         // Left mini-card: Parent POI with Exit-Vector Callout Badges
                         egui::Frame::canvas(ui.style())
                             .inner_margin(egui::Margin::same(6))
-                            .stroke(Stroke::new(1.2, Color32::from_rgb(56, 189, 248)))
+                            .stroke(Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)))
                             .show(ui, |ui| {
                                 ui.set_width(235.0);
                                 ui.colored_label(
@@ -11950,7 +11981,7 @@ impl SarAtlasGuiApp {
                             egui::Frame::canvas(ui.style())
                                 .inner_margin(egui::Margin::same(6))
                                 .stroke(Stroke::new(
-                                    if is_sel { 1.8 } else { 1.0 },
+                                    if is_sel { 1.8 } else { 1.0_f32 },
                                     Color32::from_rgb(er, eg_c, eb),
                                 ))
                                 .show(ui, |ui| {
@@ -12167,7 +12198,7 @@ fn paint_poi_exit_vectors_2d(
             painter.circle_stroke(
                 sp,
                 if is_act { 10.5 } else { 7.5 },
-                Stroke::new(if is_act { 1.8 } else { 1.1 }, col),
+                Stroke::new(if is_act { 1.8 } else { 1.1_f32 }, col),
             );
             let badge_pos = Pos2::new(
                 sp.x.clamp(rect.left() + 18.0, rect.right() - 18.0),
@@ -12178,7 +12209,7 @@ fn paint_poi_exit_vectors_2d(
                 pill,
                 3.0,
                 Color32::from_rgba_unmultiplied(15, 23, 42, 238),
-                Stroke::new(1.0, col),
+                Stroke::new(1.0_f32, col),
                 egui::StrokeKind::Inside,
             );
             painter.text(
@@ -12287,7 +12318,7 @@ fn paint_three_body_hook_curve(painter: &egui::Painter, rect: Rect, cand: &Prota
         Color32::from_rgba_unmultiplied(52, 211, 153, 18),
     );
 
-    let grid_stroke = Stroke::new(1.0, Color32::from_rgb(30, 41, 59));
+    let grid_stroke = Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59));
     for (log_exp, lbl) in [
         (-2.0f32, "0.01nM"),
         (-1.0, "0.1"),
@@ -12336,7 +12367,7 @@ fn paint_three_body_hook_curve(painter: &egui::Painter, rect: Rect, cand: &Prota
     if bin_pts.len() >= 2 {
         painter.add(egui::Shape::line(
             bin_pts,
-            Stroke::new(1.6, Color32::from_rgba_unmultiplied(248, 113, 113, 175)),
+            Stroke::new(1.6_f32, Color32::from_rgba_unmultiplied(248, 113, 113, 175)),
         ));
     }
 
@@ -12351,7 +12382,7 @@ fn paint_three_body_hook_curve(painter: &egui::Painter, rect: Rect, cand: &Prota
     if tc_pts.len() >= 2 {
         painter.add(egui::Shape::line(
             tc_pts,
-            Stroke::new(2.5, Color32::from_rgb(er, eg_c, eb)),
+            Stroke::new(2.5_f32, Color32::from_rgb(er, eg_c, eb)),
         ));
     }
 
@@ -12364,7 +12395,7 @@ fn paint_three_body_hook_curve(painter: &egui::Painter, rect: Rect, cand: &Prota
         let x = nm_to_x(nm_val);
         painter.line_segment(
             [Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())],
-            Stroke::new(1.1, col),
+            Stroke::new(1.1_f32, col),
         );
         painter.text(
             Pos2::new(x, plot.top() - 8.0),
@@ -12379,7 +12410,7 @@ fn paint_three_body_hook_curve(painter: &egui::Painter, rect: Rect, cand: &Prota
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 }
@@ -12446,7 +12477,7 @@ fn paint_chameleonicity_epsa_map(
     if d1 > d0 {
         painter.line_segment(
             [Pos2::new(to_x(d0), to_y(d0)), Pos2::new(to_x(d1), to_y(d1))],
-            Stroke::new(1.1, Color32::from_rgb(71, 85, 105)),
+            Stroke::new(1.1_f32, Color32::from_rgb(71, 85, 105)),
         );
     }
 
@@ -12459,7 +12490,7 @@ fn paint_chameleonicity_epsa_map(
         let rad = 3.2 + (c.chameleon.dimhb_count as f32 * 0.6).min(3.0);
         painter.circle_filled(p, rad, Color32::from_rgba_unmultiplied(r, g, b, 195));
         if i == sel_idx {
-            painter.circle_stroke(p, rad + 3.2, Stroke::new(1.8, Color32::WHITE));
+            painter.circle_stroke(p, rad + 3.2, Stroke::new(1.8_f32, Color32::WHITE));
         }
     }
 
@@ -12482,7 +12513,7 @@ fn paint_chameleonicity_epsa_map(
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 }
@@ -12842,7 +12873,7 @@ impl SarAtlasGuiApp {
                                         if met.is_reactive_bioactivation || met.rank == 1 {
                                             1.7
                                         } else {
-                                            1.0
+                                            1.0_f32
                                         },
                                         Color32::from_rgb(pr, pg, pb),
                                     ))
@@ -13157,7 +13188,7 @@ fn paint_molecule_smartcyp_som_2d(
             let sp = to_screen(a.pos2d);
             let rad = (scale * if rk == 0 { 0.54 } else { 0.44 }).clamp(7.0, 15.0);
             painter.circle_filled(sp, rad, Color32::from_rgba_unmultiplied(r, g, b, 58));
-            painter.circle_stroke(sp, rad, Stroke::new(if rk == 0 { 2.0 } else { 1.4 }, Color32::from_rgb(r, g, b)));
+            painter.circle_stroke(sp, rad, Stroke::new(if rk == 0 { 2.0 } else { 1.4_f32 }, Color32::from_rgb(r, g, b)));
         }
     }
 
@@ -13195,7 +13226,7 @@ fn paint_molecule_smartcyp_som_2d(
                 pill,
                 3.5,
                 Color32::from_rgba_unmultiplied(15, 23, 42, 238),
-                Stroke::new(1.0, Color32::from_rgb(r, g, b)),
+                Stroke::new(1.0_f32, Color32::from_rgb(r, g, b)),
                 egui::StrokeKind::Inside,
             );
             painter.text(
@@ -13279,7 +13310,7 @@ fn paint_cyp_fm_and_mass_spectrum(
         plot.bottom() - (ab.clamp(0.0, max_ab) / max_ab) * plot.height()
     };
 
-    let grid_stroke = Stroke::new(1.0, Color32::from_rgb(30, 41, 59));
+    let grid_stroke = Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59));
     for dm_tick in [-42, -14, 0, 16, 32, 80, 176, 192] {
         let x = dm_to_x(dm_tick as f32);
         painter.line_segment(
@@ -13299,7 +13330,7 @@ fn paint_cyp_fm_and_mass_spectrum(
     let x0 = dm_to_x(0.0);
     painter.line_segment(
         [Pos2::new(x0, plot.top()), Pos2::new(x0, plot.bottom())],
-        Stroke::new(1.2, Color32::from_rgba_unmultiplied(226, 232, 240, 95)),
+        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(226, 232, 240, 95)),
     );
 
     // Metabolite LC-HRMS mass-shift sticks
@@ -13312,7 +13343,7 @@ fn paint_cyp_fm_and_mass_spectrum(
             met.phase.rgb()
         };
         let col = Color32::from_rgb(r, g, b);
-        painter.line_segment([Pos2::new(x, plot.bottom()), Pos2::new(x, y)], Stroke::new(2.6, col));
+        painter.line_segment([Pos2::new(x, plot.bottom()), Pos2::new(x, y)], Stroke::new(2.6_f32, col));
         painter.circle_filled(Pos2::new(x, y), 3.8, col);
         painter.text(
             Pos2::new(x, (y - 9.0).max(plot.top() + 7.0)),
@@ -13335,7 +13366,7 @@ fn paint_cyp_fm_and_mass_spectrum(
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 }
@@ -14096,7 +14127,7 @@ fn paint_macrocycle_terminal_pair_2d(
                 u * u * pa.y + 2.0 * u * t * ctrl.y + t * t * pb.y,
             )
         };
-        painter.line_segment([bez(t0), bez(t1)], Stroke::new(2.1, arc_col));
+        painter.line_segment([bez(t0), bez(t1)], Stroke::new(2.1_f32, arc_col));
     }
 
     let apex = Pos2::new(
@@ -14145,9 +14176,9 @@ fn paint_macrocycle_entropy_strain_chart(
     for &yv in &[-2.5f32, -1.5, -1.0, 0.0, 1.0] {
         let py = y_to_px(yv);
         let stroke = if yv.abs() < 0.01 {
-            Stroke::new(1.3, Color32::from_rgb(148, 163, 184))
+            Stroke::new(1.3_f32, Color32::from_rgb(148, 163, 184))
         } else {
-            Stroke::new(0.8, Color32::from_rgb(30, 41, 59))
+            Stroke::new(0.8_f32, Color32::from_rgb(30, 41, 59))
         };
         painter.line_segment([Pos2::new(plot.left(), py), Pos2::new(plot.right(), py)], stroke);
         painter.text(
@@ -14210,7 +14241,7 @@ fn paint_macrocycle_entropy_strain_chart(
         painter.circle_stroke(
             Pos2::new(cx, net_y),
             4.4,
-            Stroke::new(1.1, Color32::from_rgb(248, 250, 252)),
+            Stroke::new(1.1_f32, Color32::from_rgb(248, 250, 252)),
         );
 
         painter.text(
@@ -14258,7 +14289,7 @@ fn paint_macrocycle_entropy_strain_chart(
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 
@@ -15010,7 +15041,7 @@ fn paint_fragment_exit_vectors_2d(
         } else {
             Color32::from_rgba_unmultiplied(cr, cg, cb, 175)
         };
-        let stroke_w = if is_act { 2.5 } else { 1.4 };
+        let stroke_w = if is_act { 2.5 } else { 1.4_f32 };
         painter.line_segment([start, tip], Stroke::new(stroke_w, col));
 
         // Arrowhead wings
@@ -15027,7 +15058,7 @@ fn paint_fragment_exit_vectors_2d(
         );
         if is_act {
             painter.circle_filled(badge, 8.5, Color32::from_rgba_unmultiplied(15, 23, 42, 230));
-            painter.circle_stroke(badge, 8.5, Stroke::new(1.3, col));
+            painter.circle_stroke(badge, 8.5, Stroke::new(1.3_f32, col));
         }
         painter.text(
             badge,
@@ -15116,7 +15147,7 @@ fn paint_fragment_efficiency_trajectory_plot(
         let px = map_pt(0.30, y_min).x;
         painter.line_segment(
             [Pos2::new(px, plot.top()), Pos2::new(px, plot.bottom())],
-            Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+            Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         );
     }
     for step in 0..=4 {
@@ -15133,7 +15164,7 @@ fn paint_fragment_efficiency_trajectory_plot(
         let py = map_pt(x_min, yv).y;
         painter.line_segment(
             [Pos2::new(plot.left(), py), Pos2::new(plot.right(), py)],
-            Stroke::new(0.7, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(0.7_f32, Color32::from_rgb(30, 41, 59)),
         );
         painter.text(
             Pos2::new(plot.left() - 6.0, py),
@@ -15159,12 +15190,12 @@ fn paint_fragment_efficiency_trajectory_plot(
         };
         painter.line_segment(
             [p_seed, p_c],
-            Stroke::new(if is_sel { 2.0 } else { 0.9 }, ray_col),
+            Stroke::new(if is_sel { 2.0 } else { 0.9_f32 }, ray_col),
         );
         let rad = if is_sel { 5.8 } else { 4.0 };
         painter.circle_filled(p_c, rad, Color32::from_rgb(rr, rg, rb));
         if is_sel {
-            painter.circle_stroke(p_c, rad + 1.5, Stroke::new(1.3, Color32::WHITE));
+            painter.circle_stroke(p_c, rad + 1.5, Stroke::new(1.3_f32, Color32::WHITE));
         }
         if is_sel || c.rank <= 3 {
             painter.text(
@@ -15186,7 +15217,7 @@ fn paint_fragment_efficiency_trajectory_plot(
 
     // Draw Seed origin marker on top
     painter.circle_filled(p_seed, 6.2, Color32::from_rgb(250, 204, 21));
-    painter.circle_stroke(p_seed, 6.2, Stroke::new(1.4, Color32::from_rgb(15, 23, 42)));
+    painter.circle_stroke(p_seed, 6.2, Stroke::new(1.4_f32, Color32::from_rgb(15, 23, 42)));
     painter.text(
         Pos2::new(p_seed.x, (p_seed.y + 11.0).min(plot.bottom() - 6.0)),
         egui::Align2::CENTER_CENTER,
@@ -15207,7 +15238,7 @@ fn paint_fragment_efficiency_trajectory_plot(
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 
@@ -15879,7 +15910,7 @@ fn paint_prodrug_handles_2d(
         let col = Color32::from_rgb(hr, hg, hb);
         let is_act = h.handle_idx == active_handle_idx;
         let rad = if is_act { 11.5 } else { 8.5 };
-        painter.circle_stroke(pos, rad, Stroke::new(if is_act { 2.2 } else { 1.2 }, col));
+        painter.circle_stroke(pos, rad, Stroke::new(if is_act { 2.2 } else { 1.2_f32 }, col));
         let badge = Pos2::new(pos.x, (pos.y - rad - 7.0).max(rect.top() + 8.0));
         painter.text(
             badge,
@@ -15945,7 +15976,7 @@ fn paint_prodrug_bioconversion_pk_chart(
         let px = map_pt(tv, 0.0).x;
         painter.line_segment(
             [Pos2::new(px, plot.top()), Pos2::new(px, plot.bottom())],
-            Stroke::new(0.7, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(0.7_f32, Color32::from_rgb(30, 41, 59)),
         );
         painter.text(
             Pos2::new(px, plot.bottom() + 10.0),
@@ -15959,7 +15990,7 @@ fn paint_prodrug_bioconversion_pk_chart(
         let py = map_pt(0.0, cv).y;
         painter.line_segment(
             [Pos2::new(plot.left(), py), Pos2::new(plot.right(), py)],
-            Stroke::new(0.7, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(0.7_f32, Color32::from_rgb(30, 41, 59)),
         );
         painter.text(
             Pos2::new(plot.left() - 6.0, py),
@@ -15977,21 +16008,21 @@ fn paint_prodrug_bioconversion_pk_chart(
         }
         let p0 = map_pt(ac.time_hr[i], ac.direct_parent_oral_nm[i]);
         let p1 = map_pt(ac.time_hr[i + 1], ac.direct_parent_oral_nm[i + 1]);
-        painter.line_segment([p0, p1], Stroke::new(1.7, Color32::from_rgb(148, 163, 184)));
+        painter.line_segment([p0, p1], Stroke::new(1.7_f32, Color32::from_rgb(148, 163, 184)));
     }
 
     // 2. Intact systemic prodrug transient spike (amber)
     for i in 0..(PRODRUG_TIME_GRID_LEN - 1) {
         let p0 = map_pt(ac.time_hr[i], ac.intact_prodrug_nm[i]);
         let p1 = map_pt(ac.time_hr[i + 1], ac.intact_prodrug_nm[i + 1]);
-        painter.line_segment([p0, p1], Stroke::new(1.9, Color32::from_rgb(251, 191, 36)));
+        painter.line_segment([p0, p1], Stroke::new(1.9_f32, Color32::from_rgb(251, 191, 36)));
     }
 
     // 3. Released active drug from prodrug (emerald)
     for i in 0..(PRODRUG_TIME_GRID_LEN - 1) {
         let p0 = map_pt(ac.time_hr[i], ac.released_active_nm[i]);
         let p1 = map_pt(ac.time_hr[i + 1], ac.released_active_nm[i + 1]);
-        painter.line_segment([p0, p1], Stroke::new(2.6, Color32::from_rgb(52, 211, 153)));
+        painter.line_segment([p0, p1], Stroke::new(2.6_f32, Color32::from_rgb(52, 211, 153)));
     }
 
     let cmax_pt = map_pt(ac.active_tmax_hr as f32, ac.active_cmax_nm as f32);
@@ -16014,7 +16045,7 @@ fn paint_prodrug_bioconversion_pk_chart(
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 }
@@ -16478,7 +16509,7 @@ fn paint_sali_heatmap_colorbar(
     painter.rect_stroke(
         card,
         5.0,
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
 
@@ -16527,7 +16558,7 @@ fn paint_sali_heatmap_colorbar(
     painter.rect_stroke(
         bar,
         1.0,
-        Stroke::new(0.8, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(0.8_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 
@@ -16626,7 +16657,7 @@ fn paint_oral_pbpk_curves(
         let px = map_pt(tv, c_floor).x;
         painter.line_segment(
             [Pos2::new(px, plot.top()), Pos2::new(px, plot.bottom())],
-            Stroke::new(0.7, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(0.7_f32, Color32::from_rgb(30, 41, 59)),
         );
         painter.text(
             Pos2::new(px, plot.bottom() + 10.0),
@@ -16648,7 +16679,7 @@ fn paint_oral_pbpk_curves(
         let py = plot.bottom() - frac * plot.height();
         painter.line_segment(
             [Pos2::new(plot.left(), py), Pos2::new(plot.right(), py)],
-            Stroke::new(0.7, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(0.7_f32, Color32::from_rgb(30, 41, 59)),
         );
         let lbl = if cv >= 100.0 {
             format!("{cv:.0}")
@@ -16679,7 +16710,7 @@ fn paint_oral_pbpk_curves(
                 }
                 let x0 = plot.left() + (seg as f32 / 24.0) * plot.width();
                 let x1 = plot.left() + ((seg + 1) as f32 / 24.0) * plot.width();
-                painter.line_segment([Pos2::new(x0, py), Pos2::new(x1, py)], Stroke::new(1.1, col));
+                painter.line_segment([Pos2::new(x0, py), Pos2::new(x1, py)], Stroke::new(1.1_f32, col));
             }
             painter.text(
                 Pos2::new(plot.right() - 4.0, py - 6.0),
@@ -16725,7 +16756,7 @@ fn paint_oral_pbpk_curves(
         for i in 0..(PBPK_TIME_POINTS - 1) {
             let p0 = map_pt(rep.time_hr[i], rep.c_total_plasma_nm[i]);
             let p1 = map_pt(rep.time_hr[i + 1], rep.c_total_plasma_nm[i + 1]);
-            painter.line_segment([p0, p1], Stroke::new(1.3, Color32::from_rgb(100, 116, 139)));
+            painter.line_segment([p0, p1], Stroke::new(1.3_f32, Color32::from_rgb(100, 116, 139)));
         }
     }
 
@@ -16733,14 +16764,14 @@ fn paint_oral_pbpk_curves(
     for i in 0..(PBPK_TIME_POINTS - 1) {
         let p0 = map_pt(rep.time_hr[i], rep.c_unbound_plasma_nm[i]);
         let p1 = map_pt(rep.time_hr[i + 1], rep.c_unbound_plasma_nm[i + 1]);
-        painter.line_segment([p0, p1], Stroke::new(2.2, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([p0, p1], Stroke::new(2.2_f32, Color32::from_rgb(56, 189, 248)));
     }
 
     // 3. Unbound Brain ISF Cu,brain(t) (bright emerald)
     for i in 0..(PBPK_TIME_POINTS - 1) {
         let p0 = map_pt(rep.time_hr[i], rep.c_unbound_brain_nm[i]);
         let p1 = map_pt(rep.time_hr[i + 1], rep.c_unbound_brain_nm[i + 1]);
-        painter.line_segment([p0, p1], Stroke::new(2.6, Color32::from_rgb(52, 211, 153)));
+        painter.line_segment([p0, p1], Stroke::new(2.6_f32, Color32::from_rgb(52, 211, 153)));
     }
 
     painter.text(
@@ -16755,7 +16786,7 @@ fn paint_oral_pbpk_curves(
         plot,
         0.0,
         Color32::TRANSPARENT,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
 }
@@ -16826,7 +16857,7 @@ fn paint_pbpk_cascade_and_organ_kp(
             Pos2::new(mid_x + 4.0, rect.top() + 8.0),
             Pos2::new(mid_x + 4.0, rect.bottom() - 8.0),
         ],
-        Stroke::new(1.0, Color32::from_rgb(30, 41, 59)),
+        Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)),
     );
 
     // Right half: Horizontal Rodgers-Rowland Organ Kp bars
@@ -16969,6 +17000,8 @@ impl SarAtlasGuiApp {
         let mut toggle_right = false;
         let mut toggle_filters = false;
         let mut toggle_zen = false;
+        let mut toggle_about = false;
+        let mut close_escape = false;
         let mut quick_save_sqlite = false;
         let mut jump_domain: Option<usize> = None;
 
@@ -16988,6 +17021,12 @@ impl SarAtlasGuiApp {
             }
             if ctrl && i.key_pressed(egui::Key::S) {
                 quick_save_sqlite = true;
+            }
+            if i.key_pressed(egui::Key::F1) {
+                toggle_about = true;
+            }
+            if i.key_pressed(egui::Key::Escape) {
+                close_escape = true;
             }
             if i.key_pressed(egui::Key::F11) {
                 toggle_zen = true;
@@ -17012,6 +17051,16 @@ impl SarAtlasGuiApp {
             if self.cmd_palette_open {
                 self.cmd_palette_just_opened = true;
                 self.cmd_palette_cursor = 0;
+            }
+        }
+        if toggle_about {
+            self.about_open = !self.about_open;
+        }
+        if close_escape && !self.cmd_palette_open {
+            if self.about_open {
+                self.about_open = false;
+            } else if self.zen_canvas_mode {
+                self.zen_canvas_mode = false;
             }
         }
         if toggle_left {
@@ -22413,7 +22462,7 @@ impl SarAtlasGuiApp {
                 rect,
                 6.0,
                 Color32::from_rgb(10, 16, 28),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -22483,7 +22532,7 @@ impl SarAtlasGuiApp {
                             proj(rep.aligned_ligand_coords3d[b.a]),
                             proj(rep.aligned_ligand_coords3d[b.b]),
                         ],
-                        Stroke::new(2.3, Color32::from_rgb(226, 232, 240)),
+                        Stroke::new(2.3_f32, Color32::from_rgb(226, 232, 240)),
                     );
                 }
             }
@@ -22497,12 +22546,12 @@ impl SarAtlasGuiApp {
                 let pa = proj(rep.aligned_ligand_coords3d[mp.parent_atom_idx]);
                 match mp.kind {
                     MultipoleSiteKind::HalogenSigmaHoleCrown => {
-                        painter.line_segment([pa, pm], Stroke::new(1.8, Color32::from_rgb(56, 189, 248)));
+                        painter.line_segment([pa, pm], Stroke::new(1.8_f32, Color32::from_rgb(56, 189, 248)));
                         painter.circle_filled(pm, 4.0, Color32::from_rgb(56, 189, 248));
-                        painter.circle_stroke(pm, 5.8, Stroke::new(1.2, Color32::WHITE));
+                        painter.circle_stroke(pm, 5.8, Stroke::new(1.2_f32, Color32::WHITE));
                     }
                     MultipoleSiteKind::ChalcogenSigmaStarLobe => {
-                        painter.line_segment([pa, pm], Stroke::new(1.6, Color32::from_rgb(250, 204, 21)));
+                        painter.line_segment([pa, pm], Stroke::new(1.6_f32, Color32::from_rgb(250, 204, 21)));
                         painter.circle_filled(pm, 3.5, Color32::from_rgb(250, 204, 21));
                     }
                     MultipoleSiteKind::DirectionalLonePairLobe => {
@@ -22524,7 +22573,7 @@ impl SarAtlasGuiApp {
                 let p2 = proj(c.partner_pos);
                 if rect.contains(p1) && rect.contains(p2) {
                     let [r, g, b] = c.kind.rgb();
-                    painter.line_segment([p1, p2], Stroke::new(2.2, Color32::from_rgb(r, g, b)));
+                    painter.line_segment([p1, p2], Stroke::new(2.2_f32, Color32::from_rgb(r, g, b)));
                 }
             }
 
@@ -22548,7 +22597,7 @@ impl SarAtlasGuiApp {
                 p_rect,
                 6.0,
                 Color32::from_rgb(13, 19, 33),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -22566,15 +22615,15 @@ impl SarAtlasGuiApp {
             // Zero axes + ideal anti-diagonal V_prot = -V_lig complementarity line
             pp.line_segment(
                 [map_v(-v_lim, 0.0), map_v(v_lim, 0.0)],
-                Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+                Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
             );
             pp.line_segment(
                 [map_v(0.0, -v_lim), map_v(0.0, v_lim)],
-                Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+                Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
             );
             pp.line_segment(
                 [map_v(-v_lim, v_lim), map_v(v_lim, -v_lim)],
-                Stroke::new(1.4, Color32::from_rgba_unmultiplied(52, 211, 153, 130)),
+                Stroke::new(1.4_f32, Color32::from_rgba_unmultiplied(52, 211, 153, 130)),
             );
 
             for cv in rep.connolly_vertices.iter().step_by(2) {
@@ -22821,12 +22870,10 @@ impl SarAtlasGuiApp {
             });
 
         if let Some(smi) = send_smiles_to_sketcher {
-            let _ = self.sketcher.load_from_smiles(&smi);
-            self.sketch_smiles_bar = smi.clone();
-            self.sketch_smiles_error = None;
-            self.esp_use_sketcher = true;
-            self.esp_cached_key.clear();
-            self.status_banner = format!("Loaded ESP-tuned analog into 2D Sketcher: {smi}");
+            if self.load_smiles_into_sketcher(&smi, "ESP-tuned analog", false) {
+                self.esp_use_sketcher = true;
+                self.esp_cached_key.clear();
+            }
         }
         if let Some((id, mi)) = pick_mol_idx {
             self.esp_use_sketcher = false;
@@ -23111,7 +23158,7 @@ impl SarAtlasGuiApp {
                 rect,
                 6.0,
                 Color32::from_rgb(10, 16, 28),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -23137,7 +23184,7 @@ impl SarAtlasGuiApp {
                     let [r, g, b] = w[0].band.rgb();
                     painter.line_segment(
                         [proj(w[0].ca_pos), proj(w[1].ca_pos)],
-                        Stroke::new(2.2, Color32::from_rgb(r, g, b)),
+                        Stroke::new(2.2_f32, Color32::from_rgb(r, g, b)),
                     );
                 }
             }
@@ -23154,14 +23201,14 @@ impl SarAtlasGuiApp {
                     painter.circle_stroke(
                         p2,
                         5.8,
-                        Stroke::new(1.8, Color32::from_rgb(250, 204, 21)),
+                        Stroke::new(1.8_f32, Color32::from_rgb(250, 204, 21)),
                     );
                 }
                 if is_intr {
                     painter.circle_stroke(
                         p2,
                         6.4,
-                        Stroke::new(1.9, Color32::from_rgb(249, 115, 22)),
+                        Stroke::new(1.9_f32, Color32::from_rgb(249, 115, 22)),
                     );
                 }
             }
@@ -23171,7 +23218,7 @@ impl SarAtlasGuiApp {
             painter.circle_stroke(
                 pc2,
                 14.0,
-                Stroke::new(1.3, Color32::from_rgba_unmultiplied(52, 211, 153, 120)),
+                Stroke::new(1.3_f32, Color32::from_rgba_unmultiplied(52, 211, 153, 120)),
             );
             for lg in &rep.extracted_ligands {
                 let pl = proj(lg.centroid);
@@ -23219,7 +23266,7 @@ impl SarAtlasGuiApp {
                 p_rect,
                 6.0,
                 Color32::from_rgb(13, 19, 33),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -23239,7 +23286,7 @@ impl SarAtlasGuiApp {
                     (self.pubpdb_cfg.trim_low_plddt_cutoff, Color32::from_rgb(249, 115, 22)),
                 ] {
                     let y = map_y(yv);
-                    pp.line_segment([Pos2::new(pl_l, y), Pos2::new(pl_r, y)], Stroke::new(1.0, col));
+                    pp.line_segment([Pos2::new(pl_l, y), Pos2::new(pl_r, y)], Stroke::new(1.0_f32, col));
                 }
 
                 let bar_w = ((pl_r - pl_l) / (n_r as f32)).max(2.0);
@@ -23450,10 +23497,7 @@ impl SarAtlasGuiApp {
             });
 
         if let Some(smi) = send_lig_smiles {
-            let _ = self.sketcher.load_from_smiles(&smi);
-            self.sketch_smiles_bar = smi.clone();
-            self.sketch_smiles_error = None;
-            self.status_banner = format!("Loaded RCSB co-crystal ligand into 2D Sketcher: {smi}");
+            self.load_smiles_into_sketcher(&smi, "RCSB co-crystal ligand", false);
         }
         if let Some(tb) = jump_to_tab {
             self.navigate_to_tab(tb);
@@ -23593,12 +23637,17 @@ impl SarAtlasGuiApp {
                 .on_hover_text("Snap harmonic rubber bands onto unsatisfied H-bonds & unhappy waters")
                 .clicked()
             {
-                let _ = auto_band_polar_contacts(&mut sess);
+                let added = auto_band_polar_contacts(&mut sess);
+                self.status_banner = format!(
+                    "Auto-Band added {added} polar harmonic band(s) ({} total).",
+                    sess.bands.len()
+                );
             }
             if ui.small_button("Clear Bands").clicked() {
                 push_undo_checkpoint(&mut sess);
                 sess.bands.clear();
                 recompute_sculpt_score(&mut sess);
+                self.status_banner = "Cleared all harmonic bands in 3D Sculpt session.".to_string();
             }
             ui.separator();
             ui.label("Repulsion:");
@@ -23609,10 +23658,18 @@ impl SarAtlasGuiApp {
                 recompute_sculpt_score(&mut sess);
             }
             if ui.small_button("Undo").clicked() {
-                let _ = undo_sculpt_move(&mut sess);
+                if undo_sculpt_move(&mut sess) {
+                    self.status_banner = "Undid last 3D sculpt move.".to_string();
+                } else {
+                    self.status_banner = "Nothing to undo in 3D sculpt session.".to_string();
+                }
             }
             if ui.small_button("Redo").clicked() {
-                let _ = redo_sculpt_move(&mut sess);
+                if redo_sculpt_move(&mut sess) {
+                    self.status_banner = "Redid 3D sculpt move.".to_string();
+                } else {
+                    self.status_banner = "Nothing to redo in 3D sculpt session.".to_string();
+                }
             }
             if ui.small_button("Restore Best").clicked() {
                 restore_best_sculpt_pose(&mut sess);
@@ -23714,7 +23771,7 @@ impl SarAtlasGuiApp {
                 rect,
                 6.0,
                 Color32::from_rgb(9, 14, 26),
-                Stroke::new(1.0, Color32::from_rgb(45, 62, 88)),
+                Stroke::new(1.0_f32, Color32::from_rgb(45, 62, 88)),
                 egui::StrokeKind::Inside,
             );
 
@@ -23901,7 +23958,7 @@ impl SarAtlasGuiApp {
                         painter.circle_stroke(
                             pw,
                             7.4,
-                            Stroke::new(1.8, Color32::from_rgb(250, 204, 21)),
+                            Stroke::new(1.8_f32, Color32::from_rgb(250, 204, 21)),
                         );
                     }
                 }
@@ -23920,7 +23977,7 @@ impl SarAtlasGuiApp {
                     } else {
                         Color32::from_rgb(167, 139, 250)
                     };
-                    painter.line_segment([pca, ptip], Stroke::new(2.1, sc_col));
+                    painter.line_segment([pca, ptip], Stroke::new(2.1_f32, sc_col));
                     painter.circle_filled(ptip, 4.1, sc_col);
                     painter.text(
                         Pos2::new(ptip.x, ptip.y - 5.5),
@@ -23948,7 +24005,7 @@ impl SarAtlasGuiApp {
                 let (pb, _) = proj_with_z(pb3);
                 painter.line_segment(
                     [pa, pb],
-                    Stroke::new(2.4, Color32::from_rgb(232, 121, 249)),
+                    Stroke::new(2.4_f32, Color32::from_rgb(232, 121, 249)),
                 );
                 let mid = Pos2::new((pa.x + pb.x) * 0.5, (pa.y + pb.y) * 0.5);
                 painter.text(
@@ -23974,7 +24031,7 @@ impl SarAtlasGuiApp {
                         let (pr2, _) = proj_with_z(ra.pos);
                         painter.line_segment(
                             [pl, pr2],
-                            Stroke::new(1.7, Color32::from_rgb(250, 204, 21)),
+                            Stroke::new(1.7_f32, Color32::from_rgb(250, 204, 21)),
                         );
                     }
                 }
@@ -23984,7 +24041,7 @@ impl SarAtlasGuiApp {
                         let (ps2, _) = proj_with_z(tip);
                         painter.line_segment(
                             [pl, ps2],
-                            Stroke::new(1.9, Color32::from_rgb(250, 204, 21)),
+                            Stroke::new(1.9_f32, Color32::from_rgb(250, 204, 21)),
                         );
                     }
                 }
@@ -23997,7 +24054,7 @@ impl SarAtlasGuiApp {
                     let (pb, _) = proj_with_z(sess.lig_coords[b.b]);
                     painter.line_segment(
                         [pa, pb],
-                        Stroke::new(2.8, Color32::from_rgb(52, 211, 153)),
+                        Stroke::new(2.8_f32, Color32::from_rgb(52, 211, 153)),
                     );
                 }
             }
@@ -24015,11 +24072,11 @@ impl SarAtlasGuiApp {
                     painter.circle_stroke(
                         pa,
                         7.0,
-                        Stroke::new(2.0, Color32::from_rgb(56, 189, 248)),
+                        Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)),
                     );
                 }
                 if sess.selected_lig_atom == Some(i) {
-                    painter.circle_stroke(pa, 8.2, Stroke::new(2.0, Color32::WHITE));
+                    painter.circle_stroke(pa, 8.2, Stroke::new(2.0_f32, Color32::WHITE));
                 }
             }
 
@@ -24044,7 +24101,7 @@ impl SarAtlasGuiApp {
                 c_rect,
                 6.0,
                 Color32::from_rgb(13, 19, 33),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -24076,7 +24133,7 @@ impl SarAtlasGuiApp {
                 (t_pl, "Platinum", Color32::from_rgb(52, 211, 153)),
             ] {
                 let y = map_y(th_v);
-                cp_paint.line_segment([Pos2::new(pl_l, y), Pos2::new(pl_r, y)], Stroke::new(1.0, col));
+                cp_paint.line_segment([Pos2::new(pl_l, y), Pos2::new(pl_r, y)], Stroke::new(1.0_f32, col));
                 cp_paint.text(
                     Pos2::new(pl_l - 4.0, y),
                     egui::Align2::RIGHT_CENTER,
@@ -24096,7 +24153,7 @@ impl SarAtlasGuiApp {
                 };
                 let p = Pos2::new(pl_l + tx * (pl_r - pl_l), map_y(st.foldit_score_pts));
                 if let Some(pp0) = prev_p {
-                    cp_paint.line_segment([pp0, p], Stroke::new(2.3, Color32::from_rgb(56, 189, 248)));
+                    cp_paint.line_segment([pp0, p], Stroke::new(2.3_f32, Color32::from_rgb(56, 189, 248)));
                 }
                 cp_paint.circle_filled(p, 3.2, Color32::WHITE);
                 prev_p = Some(p);
@@ -24260,10 +24317,7 @@ impl SarAtlasGuiApp {
             } else {
                 sess.mol.smiles.clone()
             };
-            let _ = self.sketcher.load_from_smiles(&smi);
-            self.sketch_smiles_bar = smi.clone();
-            self.sketch_smiles_error = None;
-            self.status_banner = format!("Sent sculpted molecule to 2D Sketcher: {smi}");
+            self.load_smiles_into_sketcher(&smi, "sculpted pose", false);
         }
 
         self.sculpt_session = Some(sess);
@@ -24443,7 +24497,7 @@ impl SarAtlasGuiApp {
                 rect,
                 6.0,
                 Color32::from_rgb(11, 17, 29),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -24500,7 +24554,7 @@ impl SarAtlasGuiApp {
                             proj(rep.aligned_ligand_coords3d[b.a]),
                             proj(rep.aligned_ligand_coords3d[b.b]),
                         ],
-                        Stroke::new(2.3, Color32::from_rgb(56, 189, 248)),
+                        Stroke::new(2.3_f32, Color32::from_rgb(56, 189, 248)),
                     );
                 }
             }
@@ -24516,7 +24570,7 @@ impl SarAtlasGuiApp {
                     if rect.contains(pa) && rect.contains(ps) {
                         painter.line_segment(
                             [pa, ps],
-                            Stroke::new(2.0, Color32::from_rgb(250, 204, 21)),
+                            Stroke::new(2.0_f32, Color32::from_rgb(250, 204, 21)),
                         );
                         let mid = Pos2::new((pa.x + ps.x) * 0.5, (pa.y + ps.y) * 0.5 - 5.0);
                         painter.text(
@@ -24547,7 +24601,7 @@ impl SarAtlasGuiApp {
                     s.status,
                     SiteLigandStatus::DisplacedNonpolar | SiteLigandStatus::ReplacedByPolarMimic
                 ) {
-                    painter.circle_stroke(ps, rad + 2.2, Stroke::new(1.7, Color32::WHITE));
+                    painter.circle_stroke(ps, rad + 2.2, Stroke::new(1.7_f32, Color32::WHITE));
                 }
                 painter.text(
                     Pos2::new(ps.x, ps.y - rad - 2.0),
@@ -24578,7 +24632,7 @@ impl SarAtlasGuiApp {
                 p_rect,
                 6.0,
                 Color32::from_rgb(13, 19, 33),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -24602,12 +24656,12 @@ impl SarAtlasGuiApp {
             let p_dh0_top = map_pt(0.0, tds_max);
             pp.line_segment(
                 [p_dh0_bot, p_dh0_top],
-                Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+                Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
             );
             let thr = self.wm_cfg.hotspot_dg_threshold_kcal;
             pp.line_segment(
                 [map_pt(thr - tds_max, tds_max), map_pt(thr, 0.0)],
-                Stroke::new(1.3, Color32::from_rgba_unmultiplied(244, 63, 94, 130)),
+                Stroke::new(1.3_f32, Color32::from_rgba_unmultiplied(244, 63, 94, 130)),
             );
 
             for s in &rep.hydration_sites {
@@ -24615,7 +24669,7 @@ impl SarAtlasGuiApp {
                 let [r, g, b] = s.class.rgb();
                 pp.circle_filled(pt, 5.0, Color32::from_rgb(r, g, b));
                 if s.ligand_overlap_f_disp >= 0.35 {
-                    pp.circle_stroke(pt, 7.2, Stroke::new(1.6, Color32::WHITE));
+                    pp.circle_stroke(pt, 7.2, Stroke::new(1.6_f32, Color32::WHITE));
                 }
                 pp.text(
                     Pos2::new(pt.x, pt.y - 6.8),
@@ -24879,12 +24933,10 @@ impl SarAtlasGuiApp {
             });
 
         if let Some(smi) = send_smiles_to_sketcher {
-            let _ = self.sketcher.load_from_smiles(&smi);
-            self.sketch_smiles_bar = smi.clone();
-            self.sketch_smiles_error = None;
-            self.wm_use_sketcher = true;
-            self.wm_cached_key.clear();
-            self.status_banner = format!("Loaded designed WaterMap analog into 2D Sketcher: {smi}");
+            if self.load_smiles_into_sketcher(&smi, "designed WaterMap analog", false) {
+                self.wm_use_sketcher = true;
+                self.wm_cached_key.clear();
+            }
         }
         if let Some((id, mi)) = pick_mol_idx {
             self.wm_use_sketcher = false;
@@ -25071,7 +25123,7 @@ impl SarAtlasGuiApp {
                 rect,
                 6.0,
                 Color32::from_rgb(11, 17, 29),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -25111,7 +25163,7 @@ impl SarAtlasGuiApp {
                             proj(rep.aligned_ligand_coords3d[b.a]),
                             proj(rep.aligned_ligand_coords3d[b.b]),
                         ],
-                        Stroke::new(2.4, Color32::from_rgb(52, 211, 153)),
+                        Stroke::new(2.4_f32, Color32::from_rgb(52, 211, 153)),
                     );
                 }
             }
@@ -25132,7 +25184,7 @@ impl SarAtlasGuiApp {
                 let w = if e.kind == HBondEdgeKind::UnfavorablePolarClash {
                     2.6
                 } else {
-                    1.9
+                    1.9_f32
                 };
                 painter.line_segment([pd, pa], Stroke::new(w, Color32::from_rgb(er, eg_c, eb)));
                 if let Some(hp) = e.proton_pos {
@@ -25154,14 +25206,14 @@ impl SarAtlasGuiApp {
                         painter.circle_stroke(
                             po,
                             4.5,
-                            Stroke::new(1.2, Color32::from_rgb(248, 113, 113)),
+                            Stroke::new(1.2_f32, Color32::from_rgb(248, 113, 113)),
                         );
                     } else {
                         painter.circle_filled(po, 4.8, Color32::from_rgb(56, 189, 248));
                         for ps in &mode.polar_sites {
                             if let Some(hp) = ps.proton_pos {
                                 let ph2 = proj(hp);
-                                painter.line_segment([po, ph2], Stroke::new(2.0, Color32::WHITE));
+                                painter.line_segment([po, ph2], Stroke::new(2.0_f32, Color32::WHITE));
                                 painter.circle_filled(ph2, 2.4, Color32::WHITE);
                             }
                         }
@@ -25202,7 +25254,7 @@ impl SarAtlasGuiApp {
                 p_rect,
                 6.0,
                 Color32::from_rgb(13, 19, 33),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -25231,14 +25283,14 @@ impl SarAtlasGuiApp {
                             map_pt(w[0].ph, w[0].naive_network_dg_kcal),
                             map_pt(w[1].ph, w[1].naive_network_dg_kcal),
                         ],
-                        Stroke::new(1.6, Color32::from_rgb(248, 113, 113)),
+                        Stroke::new(1.6_f32, Color32::from_rgb(248, 113, 113)),
                     );
                     pp.line_segment(
                         [
                             map_pt(w[0].ph, w[0].optimized_network_dg_kcal),
                             map_pt(w[1].ph, w[1].optimized_network_dg_kcal),
                         ],
-                        Stroke::new(2.5, Color32::from_rgb(52, 211, 153)),
+                        Stroke::new(2.5_f32, Color32::from_rgb(52, 211, 153)),
                     );
                 }
                 for pt in &rep.ph_linkage_curve {
@@ -25693,7 +25745,7 @@ impl SarAtlasGuiApp {
                 rect,
                 6.0,
                 Color32::from_rgb(11, 17, 29),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -25742,7 +25794,7 @@ impl SarAtlasGuiApp {
                             if mv.selected_rotamer != DunbrackRotamerId::NativeCrystal {
                                 painter.line_segment(
                                     [piv2, pn],
-                                    Stroke::new(1.3, Color32::from_rgba_unmultiplied(248, 113, 113, 120)),
+                                    Stroke::new(1.3_f32, Color32::from_rgba_unmultiplied(248, 113, 113, 120)),
                                 );
                                 painter.circle_filled(
                                     pn,
@@ -25751,13 +25803,13 @@ impl SarAtlasGuiApp {
                                 );
                                 painter.line_segment(
                                     [piv2, pr_pt],
-                                    Stroke::new(2.4, Color32::from_rgb(251, 191, 36)),
+                                    Stroke::new(2.4_f32, Color32::from_rgb(251, 191, 36)),
                                 );
                                 painter.circle_filled(pr_pt, 3.8, Color32::from_rgb(251, 191, 36));
                             } else {
                                 painter.line_segment(
                                     [piv2, pr_pt],
-                                    Stroke::new(1.5, Color32::from_rgba_unmultiplied(148, 163, 184, 120)),
+                                    Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(148, 163, 184, 120)),
                                 );
                             }
                         }
@@ -25777,7 +25829,7 @@ impl SarAtlasGuiApp {
                     if b.a < st.aligned_ligand_coords3d.len() && b.b < st.aligned_ligand_coords3d.len() {
                         let pa = proj(st.aligned_ligand_coords3d[b.a]);
                         let pb = proj(st.aligned_ligand_coords3d[b.b]);
-                        painter.line_segment([pa, pb], Stroke::new(2.6, Color32::from_rgb(52, 211, 153)));
+                        painter.line_segment([pa, pb], Stroke::new(2.6_f32, Color32::from_rgb(52, 211, 153)));
                     }
                 }
                 for &lp in &st.aligned_ligand_coords3d {
@@ -25807,7 +25859,7 @@ impl SarAtlasGuiApp {
                 b_rect,
                 6.0,
                 Color32::from_rgb(13, 19, 33),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -26283,7 +26335,7 @@ impl SarAtlasGuiApp {
                 rect,
                 6.0,
                 Color32::from_rgb(11, 17, 29),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -26318,7 +26370,7 @@ impl SarAtlasGuiApp {
                 if b.a < rep.frag_a_coords3d.len() && b.b < rep.frag_a_coords3d.len() {
                     let (pa, _) = project3(rep.frag_a_coords3d[b.a]);
                     let (pb, _) = project3(rep.frag_a_coords3d[b.b]);
-                    painter.line_segment([pa, pb], Stroke::new(2.3, Color32::from_rgb(56, 189, 248)));
+                    painter.line_segment([pa, pb], Stroke::new(2.3_f32, Color32::from_rgb(56, 189, 248)));
                 }
             }
             for &pt in &rep.frag_a_coords3d {
@@ -26329,7 +26381,7 @@ impl SarAtlasGuiApp {
                 if b.a < rep.frag_b_coords3d.len() && b.b < rep.frag_b_coords3d.len() {
                     let (pa, _) = project3(rep.frag_b_coords3d[b.a]);
                     let (pb, _) = project3(rep.frag_b_coords3d[b.b]);
-                    painter.line_segment([pa, pb], Stroke::new(2.3, Color32::from_rgb(251, 191, 36)));
+                    painter.line_segment([pa, pb], Stroke::new(2.3_f32, Color32::from_rgb(251, 191, 36)));
                 }
             }
             for &pt in &rep.frag_b_coords3d {
@@ -26344,10 +26396,10 @@ impl SarAtlasGuiApp {
                 let (tb, _) = project3(vp.vec_b.exit_tip_pos3d);
                 painter.line_segment(
                     [aa, ab],
-                    Stroke::new(1.1, Color32::from_rgba_unmultiplied(226, 232, 240, 115)),
+                    Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(226, 232, 240, 115)),
                 );
-                painter.arrow(aa, ta - aa, Stroke::new(2.2, Color32::from_rgb(125, 211, 252)));
-                painter.arrow(ab, tb - ab, Stroke::new(2.2, Color32::from_rgb(253, 224, 71)));
+                painter.arrow(aa, ta - aa, Stroke::new(2.2_f32, Color32::from_rgb(125, 211, 252)));
+                painter.arrow(ab, tb - ab, Stroke::new(2.2_f32, Color32::from_rgb(253, 224, 71)));
                 let mid = Pos2::new((aa.x + ab.x) * 0.5, (aa.y + ab.y) * 0.5 - 10.0);
                 painter.text(
                     mid,
@@ -26372,9 +26424,9 @@ impl SarAtlasGuiApp {
                             || (c.frag_a_atoms.contains(&b.a) && c.frag_b_atoms.contains(&b.b))
                             || (c.frag_b_atoms.contains(&b.a) && c.frag_a_atoms.contains(&b.b));
                         let stroke = if is_bridge {
-                            Stroke::new(3.1, Color32::from_rgb(52, 211, 153))
+                            Stroke::new(3.1_f32, Color32::from_rgb(52, 211, 153))
                         } else {
-                            Stroke::new(1.4, Color32::from_rgba_unmultiplied(167, 243, 208, 130))
+                            Stroke::new(1.4_f32, Color32::from_rgba_unmultiplied(167, 243, 208, 130))
                         };
                         painter.line_segment([pa, pb], stroke);
                     }
@@ -26406,7 +26458,7 @@ impl SarAtlasGuiApp {
                 w_rect,
                 6.0,
                 Color32::from_rgb(13, 19, 33),
-                Stroke::new(1.0, Color32::from_rgb(38, 52, 74)),
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 74)),
                 egui::StrokeKind::Inside,
             );
 
@@ -26437,7 +26489,7 @@ impl SarAtlasGuiApp {
                         Pos2::new(zero_x, w_rect.top() + 28.0),
                         Pos2::new(zero_x, w_rect.bottom() - 42.0),
                     ],
-                    Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+                    Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
                 );
                 let px_per_kcal = (w_rect.width() * 0.46) / 13.5;
                 for (ti, (lbl, val, col)) in terms.iter().enumerate() {
@@ -27305,7 +27357,7 @@ fn paint_dossier_radar_egui(
         rect,
         8.0,
         Color32::from_rgb(15, 23, 42),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
 
@@ -27325,7 +27377,7 @@ fn paint_dossier_radar_egui(
         for k in 0..6 {
             painter.line_segment(
                 [ring_pts[k], ring_pts[(k + 1) % 6]],
-                Stroke::new(1.0, Color32::from_rgb(30, 41, 59)),
+                Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)),
             );
         }
     }
@@ -27336,7 +27388,7 @@ fn paint_dossier_radar_egui(
         let outer = Pos2::new(cx + r_max * ang.cos(), cy + r_max * ang.sin());
         painter.line_segment(
             [Pos2::new(cx, cy), outer],
-            Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+            Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         );
 
         let frac = ((pillar_scores[k] / 100.0) as f32).clamp(0.05, 1.0);
@@ -27368,7 +27420,7 @@ fn paint_dossier_radar_egui(
     painter.add(egui::Shape::convex_polygon(
         poly_pts.clone(),
         Color32::from_rgba_unmultiplied(56, 189, 248, 54),
-        Stroke::new(2.0, Color32::from_rgb(56, 189, 248)),
+        Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)),
     ));
     for pt in poly_pts {
         painter.circle_filled(pt, 3.5, Color32::from_rgb(52, 211, 153));
@@ -27384,7 +27436,7 @@ fn paint_de_novo_trajectory(
         rect,
         8.0,
         Color32::from_rgb(15, 23, 42),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     if traj.is_empty() {
@@ -27399,7 +27451,7 @@ fn paint_de_novo_trajectory(
         let y = plot.bottom() - frac * plot.height();
         painter.line_segment(
             [Pos2::new(plot.left(), y), Pos2::new(plot.right(), y)],
-            Stroke::new(1.0, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)),
         );
         painter.text(
             Pos2::new(plot.left() - 5.0, y),
@@ -27438,21 +27490,21 @@ fn paint_de_novo_trajectory(
                     Pos2::new(xp, y_for(traj[i].best_fitness)),
                     Pos2::new(x2, y_for(traj[i + 1].best_fitness)),
                 ],
-                Stroke::new(2.2, Color32::from_rgb(52, 211, 153)),
+                Stroke::new(2.2_f32, Color32::from_rgb(52, 211, 153)),
             );
             painter.line_segment(
                 [
                     Pos2::new(xp, y_for(traj[i].mean_top10_fitness)),
                     Pos2::new(x2, y_for(traj[i + 1].mean_top10_fitness)),
                 ],
-                Stroke::new(1.8, Color32::from_rgb(56, 189, 248)),
+                Stroke::new(1.8_f32, Color32::from_rgb(56, 189, 248)),
             );
             painter.line_segment(
                 [
                     Pos2::new(xp, y_for(traj[i].scaffold_hop_pct)),
                     Pos2::new(x2, y_for(traj[i + 1].scaffold_hop_pct)),
                 ],
-                Stroke::new(1.6, Color32::from_rgb(192, 132, 252)),
+                Stroke::new(1.6_f32, Color32::from_rgb(192, 132, 252)),
             );
         }
         painter.circle_filled(
@@ -27488,7 +27540,7 @@ fn paint_3d_pocket_cavity_viewport(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     let painter = painter.with_clip_rect(rect);
@@ -27556,7 +27608,7 @@ fn paint_3d_pocket_cavity_viewport(
             painter.circle_stroke(
                 spos,
                 (fp.tolerance_radius_a * zoom * 0.42).clamp(5.0, 13.0),
-                Stroke::new(1.1, Color32::from_rgba_unmultiplied(r, g, b, 155)),
+                Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(r, g, b, 155)),
             );
         }
     }
@@ -27574,7 +27626,7 @@ fn paint_3d_pocket_cavity_viewport(
             painter.circle_stroke(
                 spos,
                 6.2,
-                Stroke::new(1.6, Color32::from_rgb(wr, wg, wb)),
+                Stroke::new(1.6_f32, Color32::from_rgb(wr, wg, wb)),
             );
             painter.text(
                 Pos2::new(spos.x, spos.y - 9.0),
@@ -27595,7 +27647,7 @@ fn paint_3d_pocket_cavity_viewport(
                 let (p2, _) = project(coords[b.b]);
                 painter.line_segment(
                     [p1, p2],
-                    Stroke::new(2.6, Color32::from_rgb(52, 211, 153)),
+                    Stroke::new(2.6_f32, Color32::from_rgb(52, 211, 153)),
                 );
             }
         }
@@ -27619,7 +27671,7 @@ fn paint_parallel_lib_diversity_scatter(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     let pad_l = 32.0_f32;
@@ -27639,7 +27691,7 @@ fn paint_parallel_lib_diversity_scatter(
         let y = plot.bottom() - f * plot.height();
         painter.line_segment(
             [Pos2::new(plot.left(), y), Pos2::new(plot.right(), y)],
-            Stroke::new(1.0, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)),
         );
     }
 
@@ -27694,7 +27746,7 @@ fn paint_3d_dual_selectivity_viewport(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     let painter = painter.with_clip_rect(rect);
@@ -27736,7 +27788,7 @@ fn paint_3d_dual_selectivity_viewport(
         painter.circle_stroke(
             spos,
             7.2,
-            Stroke::new(1.3, Color32::from_rgba_unmultiplied(251, 191, 36, 180)),
+            Stroke::new(1.3_f32, Color32::from_rgba_unmultiplied(251, 191, 36, 180)),
         );
         painter.text(
             Pos2::new(spos.x + 7.0, spos.y - 5.0),
@@ -27753,7 +27805,7 @@ fn paint_3d_dual_selectivity_viewport(
             let spos = project(dw.pos);
             let [r, g, b] = dw.role.rgb();
             painter.circle_filled(spos, 6.2, Color32::from_rgba_unmultiplied(r, g, b, 90));
-            painter.circle_stroke(spos, 6.2, Stroke::new(1.6, Color32::from_rgb(r, g, b)));
+            painter.circle_stroke(spos, 6.2, Stroke::new(1.6_f32, Color32::from_rgb(r, g, b)));
             painter.text(
                 Pos2::new(spos.x, spos.y - 9.0),
                 egui::Align2::CENTER_CENTER,
@@ -27771,7 +27823,7 @@ fn paint_3d_dual_selectivity_viewport(
             if b.a < oc.len() && b.b < oc.len() {
                 painter.line_segment(
                     [project(oc[b.a]), project(oc[b.b])],
-                    Stroke::new(1.6, Color32::from_rgba_unmultiplied(248, 113, 113, 155)),
+                    Stroke::new(1.6_f32, Color32::from_rgba_unmultiplied(248, 113, 113, 155)),
                 );
             }
         }
@@ -27783,7 +27835,7 @@ fn paint_3d_dual_selectivity_viewport(
         if b.a < tc.len() && b.b < tc.len() {
             painter.line_segment(
                 [project(tc[b.a]), project(tc[b.b])],
-                Stroke::new(2.7, Color32::from_rgb(52, 211, 153)),
+                Stroke::new(2.7_f32, Color32::from_rgb(52, 211, 153)),
             );
         }
     }
@@ -27804,7 +27856,7 @@ fn paint_mutation_ddg_bar_chart(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     let entries: Vec<_> = scan.entries.iter().take(7).collect();
@@ -27834,12 +27886,12 @@ fn paint_mutation_ddg_bar_chart(
     let x0 = x_for(0.0);
     painter.line_segment(
         [Pos2::new(x0, plot.top()), Pos2::new(x0, plot.bottom())],
-        Stroke::new(1.2, Color32::from_rgb(100, 116, 139)),
+        Stroke::new(1.2_f32, Color32::from_rgb(100, 116, 139)),
     );
     let x10 = x_for(1.36);
     painter.line_segment(
         [Pos2::new(x10, plot.top()), Pos2::new(x10, plot.bottom())],
-        Stroke::new(1.1, Color32::from_rgba_unmultiplied(248, 113, 113, 135)),
+        Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(248, 113, 113, 135)),
     );
     painter.text(
         Pos2::new(x10, rect.top() + 8.0),
@@ -27896,7 +27948,7 @@ fn paint_3d_allosteric_network_viewport(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     let painter = painter.with_clip_rect(rect);
@@ -27949,7 +28001,7 @@ fn paint_3d_allosteric_network_viewport(
         for &(i, j, _) in &net.spring_edges {
             painter.line_segment(
                 [project(displaced_pos(i)), project(displaced_pos(j))],
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(71, 85, 105, 95)),
+                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(71, 85, 105, 95)),
             );
         }
     }
@@ -27959,7 +28011,7 @@ fn paint_3d_allosteric_network_viewport(
         for w in net.primary_pathway_nodes.windows(2) {
             painter.line_segment(
                 [project(displaced_pos(w[0])), project(displaced_pos(w[1]))],
-                Stroke::new(3.0, Color32::from_rgb(251, 191, 36)),
+                Stroke::new(3.0_f32, Color32::from_rgb(251, 191, 36)),
             );
         }
     }
@@ -27989,7 +28041,7 @@ fn paint_3d_allosteric_network_viewport(
                     ]);
                     painter.line_segment(
                         [sp_pt, tip],
-                        Stroke::new(1.2, Color32::from_rgba_unmultiplied(192, 132, 252, 165)),
+                        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(192, 132, 252, 165)),
                     );
                 }
             }
@@ -28013,7 +28065,7 @@ fn paint_3d_allosteric_network_viewport(
             if b.a < lc.len() && b.b < lc.len() {
                 painter.line_segment(
                     [project(lc[b.a]), project(lc[b.b])],
-                    Stroke::new(2.5, Color32::from_rgb(52, 211, 153)),
+                    Stroke::new(2.5_f32, Color32::from_rgb(52, 211, 153)),
                 );
             }
         }
@@ -28035,7 +28087,7 @@ fn paint_gnm_dccm_and_msf_panel(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     let n = net.nodes.len();
@@ -28068,7 +28120,7 @@ fn paint_gnm_dccm_and_msf_panel(
     painter.rect_stroke(
         hm,
         2.0,
-        Stroke::new(1.0, Color32::from_rgb(71, 85, 105)),
+        Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)),
         egui::StrokeKind::Inside,
     );
     painter.text(
@@ -28091,7 +28143,7 @@ fn paint_gnm_dccm_and_msf_panel(
         let y = prof.bottom() - (k as f32) * 0.25 * prof.height();
         painter.line_segment(
             [Pos2::new(prof.left(), y), Pos2::new(prof.right(), y)],
-            Stroke::new(1.0, Color32::from_rgb(30, 41, 59)),
+            Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)),
         );
     }
 
@@ -28109,14 +28161,14 @@ fn paint_gnm_dccm_and_msf_panel(
                     Pos2::new(x_for(i), y_for(net.nodes[i].gnm_msf_norm)),
                     Pos2::new(x_for(i + 1), y_for(net.nodes[i + 1].gnm_msf_norm)),
                 ],
-                Stroke::new(1.9, Color32::from_rgb(192, 132, 252)),
+                Stroke::new(1.9_f32, Color32::from_rgb(192, 132, 252)),
             );
             painter.line_segment(
                 [
                     Pos2::new(x_for(i), y_for(net.nodes[i].prs_transmitted_strain)),
                     Pos2::new(x_for(i + 1), y_for(net.nodes[i + 1].prs_transmitted_strain)),
                 ],
-                Stroke::new(1.8, Color32::from_rgb(52, 211, 153)),
+                Stroke::new(1.8_f32, Color32::from_rgb(52, 211, 153)),
             );
         }
         if net.nodes[i].is_mechanical_hinge {
@@ -28147,7 +28199,7 @@ fn paint_al_uncertainty_acquisition_scatter(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     if cands.is_empty() {
@@ -28190,7 +28242,7 @@ fn paint_al_uncertainty_acquisition_scatter(
     let y_best_px = y_for(best_obs_pact);
     painter.line_segment(
         [Pos2::new(plot.left(), y_best_px), Pos2::new(plot.right(), y_best_px)],
-        Stroke::new(1.2, Color32::from_rgba_unmultiplied(251, 191, 36, 150)),
+        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(251, 191, 36, 150)),
     );
     painter.text(
         Pos2::new(plot.right() - 4.0, y_best_px - 7.0),
@@ -28241,7 +28293,7 @@ fn paint_al_parity_and_enrichment_panel(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
 
@@ -28261,12 +28313,12 @@ fn paint_al_parity_and_enrichment_panel(
     painter.rect_stroke(
         par,
         2.0,
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     painter.line_segment(
         [Pos2::new(par.left(), par.bottom()), Pos2::new(par.right(), par.top())],
-        Stroke::new(1.1, Color32::from_rgba_unmultiplied(148, 163, 184, 120)),
+        Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(148, 163, 184, 120)),
     );
 
     let q90 = rep.validation.conformal_90_scale;
@@ -28277,7 +28329,7 @@ fn paint_al_parity_and_enrichment_panel(
         let y_lo = map_y(pred - q90 * sig);
         painter.line_segment(
             [Pos2::new(xp, y_hi), Pos2::new(xp, y_lo)],
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(56, 189, 248, 95)),
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 95)),
         );
         painter.circle_filled(Pos2::new(xp, yp), 3.0, Color32::from_rgb(56, 189, 248));
     }
@@ -28321,14 +28373,14 @@ fn paint_al_parity_and_enrichment_panel(
                     Pos2::new(x1, ry_for(rep.simulated_curve[i].al_best_pact_found)),
                     Pos2::new(x2, ry_for(rep.simulated_curve[i + 1].al_best_pact_found)),
                 ],
-                Stroke::new(2.2, Color32::from_rgb(52, 211, 153)),
+                Stroke::new(2.2_f32, Color32::from_rgb(52, 211, 153)),
             );
             painter.line_segment(
                 [
                     Pos2::new(x1, ry_for(rep.simulated_curve[i].random_best_pact_found)),
                     Pos2::new(x2, ry_for(rep.simulated_curve[i + 1].random_best_pact_found)),
                 ],
-                Stroke::new(1.6, Color32::from_rgb(148, 163, 184)),
+                Stroke::new(1.6_f32, Color32::from_rgb(148, 163, 184)),
             );
         }
         painter.circle_filled(
@@ -28359,7 +28411,7 @@ fn paint_rbfe_lomap_perturbation_graph(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     if rep.nodes.is_empty() {
@@ -28406,7 +28458,7 @@ fn paint_rbfe_lomap_perturbation_graph(
         } else if e.is_spanning_tree_edge {
             (Color32::from_rgba_unmultiplied(cr, cg, cb, 195), 1.8)
         } else {
-            (Color32::from_rgba_unmultiplied(cr, cg, cb, 130), 1.3)
+            (Color32::from_rgba_unmultiplied(cr, cg, cb, 130), 1.3_f32)
         };
         painter.line_segment([p0, p1], Stroke::new(width, col));
 
@@ -28440,10 +28492,10 @@ fn paint_rbfe_lomap_perturbation_graph(
             painter.circle_stroke(
                 pt,
                 rad + 3.0,
-                Stroke::new(1.8, Color32::from_rgb(16, 185, 129)),
+                Stroke::new(1.8_f32, Color32::from_rgb(16, 185, 129)),
             );
         }
-        painter.circle_stroke(pt, rad + 1.0, Stroke::new(1.0, Color32::from_rgb(15, 23, 42)));
+        painter.circle_stroke(pt, rad + 1.0, Stroke::new(1.0_f32, Color32::from_rgb(15, 23, 42)));
         painter.text(
             Pos2::new(pt.x, pt.y - rad - 5.5),
             egui::Align2::CENTER_CENTER,
@@ -28478,7 +28530,7 @@ fn paint_rbfe_lambda_and_parity_panel(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     if rep.edges.is_empty() {
@@ -28494,7 +28546,7 @@ fn paint_rbfe_lambda_and_parity_panel(
     painter.rect_stroke(
         left_r,
         2.0,
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
 
@@ -28538,7 +28590,7 @@ fn paint_rbfe_lambda_and_parity_panel(
     for i in 0..m {
         let p0 = Pos2::new(lx(i), ly(cum_ddg[i]));
         let p1 = Pos2::new(lx(i + 1), ly(cum_ddg[i + 1]));
-        painter.line_segment([p0, p1], Stroke::new(2.1, Color32::from_rgb(52, 211, 153)));
+        painter.line_segment([p0, p1], Stroke::new(2.1_f32, Color32::from_rgb(52, 211, 153)));
         painter.circle_filled(p1, 2.6, Color32::from_rgb(52, 211, 153));
     }
     painter.text(
@@ -28560,7 +28612,7 @@ fn paint_rbfe_lambda_and_parity_panel(
     painter.rect_stroke(
         par,
         2.0,
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
 
@@ -28576,7 +28628,7 @@ fn paint_rbfe_lambda_and_parity_panel(
     // Diagonal identity + clipped +-1.0 kcal/mol chemical accuracy lines
     painter.line_segment(
         [Pos2::new(par.left(), par.bottom()), Pos2::new(par.right(), par.top())],
-        Stroke::new(1.2, Color32::from_rgba_unmultiplied(148, 163, 184, 140)),
+        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(148, 163, 184, 140)),
     );
     if span > 1.05 {
         painter.line_segment(
@@ -28584,14 +28636,14 @@ fn paint_rbfe_lambda_and_parity_panel(
                 Pos2::new(px((g_min + 1.0) as f64), py(g_min as f64)),
                 Pos2::new(px(g_max as f64), py((g_max - 1.0) as f64)),
             ],
-            Stroke::new(0.9, Color32::from_rgba_unmultiplied(52, 211, 153, 85)),
+            Stroke::new(0.9_f32, Color32::from_rgba_unmultiplied(52, 211, 153, 85)),
         );
         painter.line_segment(
             [
                 Pos2::new(px(g_min as f64), py((g_min + 1.0) as f64)),
                 Pos2::new(px((g_max - 1.0) as f64), py(g_max as f64)),
             ],
-            Stroke::new(0.9, Color32::from_rgba_unmultiplied(52, 211, 153, 85)),
+            Stroke::new(0.9_f32, Color32::from_rgba_unmultiplied(52, 211, 153, 85)),
         );
     }
 
@@ -28603,7 +28655,7 @@ fn paint_rbfe_lambda_and_parity_panel(
             let y_hi = py(nd.mle_dg_bind_kcal + nd.mle_dg_std_kcal);
             painter.line_segment(
                 [Pos2::new(x, y_lo), Pos2::new(x, y_hi)],
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(56, 189, 248, 110)),
+                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 110)),
             );
             let col = if nd.is_reference_anchor {
                 Color32::from_rgb(251, 191, 36)
@@ -28622,7 +28674,7 @@ fn paint_rbfe_lambda_and_parity_panel(
         let ty = par.bottom() - frac * par.height();
         painter.line_segment(
             [Pos2::new(tx, par.bottom()), Pos2::new(tx, par.bottom() + 3.0)],
-            Stroke::new(1.0, tick_col),
+            Stroke::new(1.0_f32, tick_col),
         );
         painter.text(
             Pos2::new(tx, par.bottom() + 10.0),
@@ -28633,7 +28685,7 @@ fn paint_rbfe_lambda_and_parity_panel(
         );
         painter.line_segment(
             [Pos2::new(par.left() - 3.0, ty), Pos2::new(par.left(), ty)],
-            Stroke::new(1.0, tick_col),
+            Stroke::new(1.0_f32, tick_col),
         );
         painter.text(
             Pos2::new(par.left() - 5.0, ty),
@@ -28690,7 +28742,7 @@ fn paint_torsion_1d_energy_profile(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     if bp.scan_angles_deg.is_empty() {
@@ -28738,7 +28790,7 @@ fn paint_torsion_1d_energy_profile(
     let y_cut = y_for(SHOICHET_SINGLE_TEU_CUTOFF);
     painter.line_segment(
         [Pos2::new(plot.left(), y_cut), Pos2::new(plot.right(), y_cut)],
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(248, 113, 113, 145)),
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(248, 113, 113, 145)),
     );
     painter.text(
         Pos2::new(plot.right() - 4.0, y_cut - 7.0),
@@ -28760,14 +28812,14 @@ fn paint_torsion_1d_energy_profile(
                 Pos2::new(x_for(a0), y_for(bp.csd_teu_curve[i])),
                 Pos2::new(x_for(a1), y_for(bp.csd_teu_curve[j])),
             ],
-            Stroke::new(1.4, Color32::from_rgba_unmultiplied(251, 191, 36, 185)),
+            Stroke::new(1.4_f32, Color32::from_rgba_unmultiplied(251, 191, 36, 185)),
         );
         painter.line_segment(
             [
                 Pos2::new(x_for(a0), y_for(bp.total_energy_kcal_curve[i])),
                 Pos2::new(x_for(a1), y_for(bp.total_energy_kcal_curve[j])),
             ],
-            Stroke::new(2.2, Color32::from_rgb(52, 211, 153)),
+            Stroke::new(2.2_f32, Color32::from_rgb(52, 211, 153)),
         );
         if bp.imhb_formed_at_bin[i] {
             painter.circle_filled(
@@ -28782,13 +28834,13 @@ fn paint_torsion_1d_energy_profile(
     let x_free = x_for(bp.free_pose_angle_deg);
     painter.line_segment(
         [Pos2::new(x_free, plot.top()), Pos2::new(x_free, plot.bottom())],
-        Stroke::new(1.5, Color32::from_rgb(56, 189, 248)),
+        Stroke::new(1.5_f32, Color32::from_rgb(56, 189, 248)),
     );
     let [qr, qg, qb] = bp.quality_band.rgb();
     let x_bio = x_for(bp.bioactive_pose_angle_deg);
     painter.line_segment(
         [Pos2::new(x_bio, plot.top()), Pos2::new(x_bio, plot.bottom())],
-        Stroke::new(2.2, Color32::from_rgb(qr, qg, qb)),
+        Stroke::new(2.2_f32, Color32::from_rgb(qr, qg, qb)),
     );
 
     for deg_tick in [0.0, 90.0, 180.0, 270.0, 360.0] {
@@ -28824,7 +28876,7 @@ fn paint_discovery_attrition_funnel(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     if rep.stage_summaries.is_empty() {
@@ -28877,7 +28929,7 @@ fn paint_discovery_attrition_funnel(
             5.0,
             Color32::from_rgba_unmultiplied(cr, cg, cb, alpha),
             Stroke::new(
-                if is_active { 1.8 } else { 1.0 },
+                if is_active { 1.8 } else { 1.0_f32 },
                 if is_active {
                     Color32::WHITE
                 } else {
@@ -28917,7 +28969,7 @@ fn paint_funnel_score_vs_teu_scatter(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     if cands.is_empty() {
@@ -28944,7 +28996,7 @@ fn paint_funnel_score_vs_teu_scatter(
     let x_gate = x_for(max_teu_gate);
     painter.line_segment(
         [Pos2::new(x_gate, plot.top()), Pos2::new(x_gate, plot.bottom())],
-        Stroke::new(1.1, Color32::from_rgba_unmultiplied(248, 113, 113, 150)),
+        Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(248, 113, 113, 150)),
     );
 
     for (i, c) in cands.iter().enumerate() {
@@ -28980,7 +29032,7 @@ fn paint_dmta_round_convergence_plot(
         rect,
         8.0,
         Color32::from_rgb(11, 17, 32),
-        Stroke::new(1.0, Color32::from_rgb(51, 65, 85)),
+        Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
     let m = rep.round_history.len();
@@ -29026,14 +29078,14 @@ fn paint_dmta_round_convergence_plot(
                     Pos2::new(x0, ry(rep.round_history[i].best_predicted_pact)),
                     Pos2::new(x1, ry(rep.round_history[i + 1].best_predicted_pact)),
                 ],
-                Stroke::new(2.2, Color32::from_rgb(52, 211, 153)),
+                Stroke::new(2.2_f32, Color32::from_rgb(52, 211, 153)),
             );
             painter.line_segment(
                 [
                     Pos2::new(x0, ry(rep.round_history[i].mean_promoted_pact)),
                     Pos2::new(x1, ry(rep.round_history[i + 1].mean_promoted_pact)),
                 ],
-                Stroke::new(1.8, Color32::from_rgb(56, 189, 248)),
+                Stroke::new(1.8_f32, Color32::from_rgb(56, 189, 248)),
             );
         }
         painter.circle_filled(
@@ -29517,5 +29569,71 @@ mod tests {
         );
         let (def_min, def_max) = compute_rbfe_parity_bounds(&[]);
         assert!(def_min < def_max);
+    }
+
+    #[test]
+    fn load_smiles_into_sketcher_validates_and_recenters() {
+        let ds = DatasetAnalysis::from_molecules(load_benchmark_26(), 0.30, 6.0);
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx);
+        let mut app = SarAtlasApp::new(&cc, ds);
+
+        app.sketch_pan = [99.0, -99.0];
+        app.sketch_cached_rev = 42;
+        assert!(app.load_smiles_into_sketcher("c1ccccc1", "benzene test", true));
+        assert!(app.sketch_smiles_error.is_none());
+        assert_eq!(app.active_tab, WorkbenchTab::Sketcher);
+        assert_eq!(app.sketch_pan, molecule_centroid(&app.sketcher.mol));
+        assert!(app.status_banner.contains("benzene test"));
+
+        app.active_tab = WorkbenchTab::SaliViewport;
+        assert!(!app.load_smiles_into_sketcher("bad_smiles((", "corrupt input", true));
+        assert!(app.sketch_smiles_error.is_some());
+        assert_eq!(app.active_tab, WorkbenchTab::SaliViewport);
+        assert!(app.status_banner.contains("Failed to load corrupt input"));
+    }
+
+    #[test]
+    fn headless_f1_and_escape_handle_about_modal_and_zen_mode() {
+        let ds = DatasetAnalysis::from_molecules(load_benchmark_26(), 0.30, 6.0);
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut app = SarAtlasApp::new(&cc, ds);
+
+        app.zen_canvas_mode = true;
+        assert!(!app.about_open);
+
+        let step_key = |app: &mut SarAtlasApp, key: egui::Key| {
+            let mut raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                ..Default::default()
+            };
+            raw.events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            let _ = ctx.run(raw, |c| app.draw_ui(c));
+        };
+
+        // F1 toggles About SAR-Atlas open
+        step_key(&mut app, egui::Key::F1);
+        assert!(app.about_open);
+        assert!(app.zen_canvas_mode);
+
+        // First Escape closes About first while preserving Zen mode
+        step_key(&mut app, egui::Key::Escape);
+        assert!(!app.about_open);
+        assert!(app.zen_canvas_mode);
+
+        // Second Escape exits Zen mode
+        step_key(&mut app, egui::Key::Escape);
+        assert!(!app.about_open);
+        assert!(!app.zen_canvas_mode);
     }
 }

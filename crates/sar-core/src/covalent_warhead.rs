@@ -496,7 +496,7 @@ pub fn detect_covalent_warheads(mol: &Molecule) -> Vec<DetectedWarhead> {
                 }
                 // Check -C#N on alpha (Serafimova/Taunton reversible cyanoacrylamide!)
                 if mol.atoms[nb].elem == Element::C {
-                    if let Some(&(n_cn, bi_cn)) = mol.adj[nb].iter().find(|&&(x, bi)| {
+                    if let Some(&(n_cn, _bi_cn)) = mol.adj[nb].iter().find(|&&(x, bi)| {
                         mol.atoms[x].elem == Element::N && mol.bonds[bi].order == BondOrder::Triple
                     }) {
                         alpha_has_cn = true;
@@ -901,7 +901,7 @@ pub fn detect_covalent_warheads(mol: &Molecule) -> Vec<DetectedWarhead> {
 
         // Cyanamide (`R2N-C#N`) or alpha-amino aliphatic nitrile (`Nirmatrelvir` / `Saxagliptin` class)
         if mol.atoms[u].elem == Element::C && mol.atoms[u].hyb == Hybridization::Sp {
-            if let Some(&(n_term, bi)) = mol.adj[u].iter().find(|&&(nb, bi)| {
+            if let Some(&(n_term, _bi)) = mol.adj[u].iter().find(|&&(nb, bi)| {
                 mol.atoms[nb].elem == Element::N && mol.bonds[bi].order == BondOrder::Triple
             }) {
                 if let Some(&(att, _)) = mol.adj[u].iter().find(|&&(nb, _)| nb != n_term) {

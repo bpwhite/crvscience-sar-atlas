@@ -37,7 +37,7 @@ use crate::conformer3d::{
     kabsch_align_3d, ConformerGenConfig,
 };
 use crate::layout2d::compute_2d_coords;
-use crate::mol::{Atom, Bond, BondOrder, Element, Hybridization, Molecule};
+use crate::mol::{Bond, BondOrder, Element, Hybridization, Molecule};
 use crate::mol_io::parse_smiles;
 use crate::physchem::{evaluate_physchem, PhyschemProfile};
 use crate::pka_protomer::evaluate_physiological_pka_74;

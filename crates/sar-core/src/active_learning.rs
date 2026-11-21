@@ -510,7 +510,6 @@ fn backward_solve_upper_t(l: &[f64], n: usize, z: &[f64]) -> Vec<f64> {
 struct FittedGaussianProcess {
     prior_mean: f64,
     signal_var: f64,
-    noise_var: f64,
     chol_l: Vec<f64>,
     alpha: Vec<f64>,
     log_marginal_likelihood: f64,
@@ -530,7 +529,6 @@ impl FittedGaussianProcess {
             return Self {
                 prior_mean: 6.5,
                 signal_var: 1.0,
-                noise_var: 0.05,
                 chol_l: Vec::new(),
                 alpha: Vec::new(),
                 log_marginal_likelihood: 0.0,
@@ -581,7 +579,6 @@ impl FittedGaussianProcess {
         Self {
             prior_mean,
             signal_var,
-            noise_var,
             chol_l,
             alpha,
             log_marginal_likelihood: lml,

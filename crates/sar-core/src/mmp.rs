@@ -60,7 +60,6 @@ pub struct MatchedMolecularPair {
 #[derive(Clone, Debug)]
 struct CutRecord {
     mol_idx: usize,
-    core_hash: u64,
     core_formula: String,
     rgroup_label: String,
     kind: MmpKind,
@@ -126,7 +125,6 @@ pub fn discover_mmps(mols: &[Molecule], profiles: &[PhyschemProfile]) -> Vec<Mat
                     .or_default()
                     .push(CutRecord {
                         mol_idx: mi,
-                        core_hash: chash,
                         core_formula: cform,
                         rgroup_label: rlabel.clone(),
                         kind: MmpKind::SingleCutRGroup,
@@ -146,7 +144,6 @@ pub fn discover_mmps(mols: &[Molecule], profiles: &[PhyschemProfile]) -> Vec<Mat
                     .or_default()
                     .push(CutRecord {
                         mol_idx: mi,
-                        core_hash: chash,
                         core_formula: full_form.clone(),
                         rgroup_label: "*[H]".to_string(),
                         kind: MmpKind::SingleCutRGroup,
@@ -181,7 +178,6 @@ pub fn discover_mmps(mols: &[Molecule], profiles: &[PhyschemProfile]) -> Vec<Mat
                     .or_default()
                     .push(CutRecord {
                         mol_idx: mi,
-                        core_hash: chash,
                         core_formula: cform,
                         rgroup_label: format!("2x {}", rlab1),
                         kind: MmpKind::SymmetricTwinCut,

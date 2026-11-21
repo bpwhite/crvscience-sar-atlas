@@ -639,11 +639,11 @@ pub fn fetch_and_assess_public_structure(
     let mut pae_json: Option<String> = None;
     let mut is_af = false;
     let mut used_live = false;
-    let mut method_str = String::new();
+    let mut method_str;
     let mut resolution_opt: Option<f64> = None;
-    let mut accession = String::new();
-    let mut source_url = String::new();
-    let mut provenance = String::new();
+    let accession;
+    let source_url;
+    let provenance;
     let mut uniprot_id = cfg.uniprot_accession.trim().to_ascii_uppercase();
     let mut gene_name = String::from("Target");
     let mut organism = String::from("Homo sapiens");

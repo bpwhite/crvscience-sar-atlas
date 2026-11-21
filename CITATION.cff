@@ -3,6 +3,7 @@ message: "If you use CRV Science SAR-Atlas in academic research, please cite the
 type: software
 title: "SAR-Atlas: Multiparameter Medicinal Chemistry Optimization, Compartmental Oral PBPK, and Relative Binding Free-Energy Networks"
 version: "3.8.0"
+date-released: "2026-11-14"
 license: "GPL-3.0-or-later"
 repository-code: "https://github.com/bpwhite/crvscience-sar-atlas"
 url: "https://crvscience.com/apps"
@@ -11,6 +12,7 @@ authors:
   - family-names: "White"
     given-names: "Bryan P."
     affiliation: "CRV Science Network"
+    orcid: "https://orcid.org/0000-0003-4191-3511"
 preferred-citation:
   type: article
   title: "SAR-Atlas: Drug Design, Body Distribution Modeling, and Candidate Screening in Rust"
@@ -18,13 +20,14 @@ preferred-citation:
     - family-names: "White"
       given-names: "Bryan P."
       affiliation: "CRV Science Network"
+      orcid: "https://orcid.org/0000-0003-4191-3511"
   doi: "10.5281/zenodo.24222390"
   url: "https://crvscience.com/apps/preprints/sar-atlas-multiparameter-pbpk-rbfe"
   journal: "CRV Science Apps Preprint Series (APP-PREPRINT-09)"
   year: 2026
 references:
   - type: article
-    title: "The CRV Science App Network: Seventeen Open-Source Rust Programs for Science, Data, and Simulation"
+    title: "The CRV Science App Network: Twenty Open-Source Rust Programs for Science, Data, and Simulation"
     authors:
       - family-names: "White"
         given-names: "Bryan P."
