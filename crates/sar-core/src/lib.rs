@@ -163,8 +163,9 @@ pub use fragment_linker::{
     MURRAY_VERDONK_RIGID_ENTROPY_KCAL,
 };
 pub use gpu_pack::{
-    build_chem_heatmap_rgba, inferno_cliff_rgb, pack_gpu_scene, viridis_rgb, GpuCameraUniform,
-    GpuEdgeInstance, GpuNodeInstance, HeatmapLayer, NodeColorMode, HEATMAP_DIM,
+    build_chem_heatmap_rgba, build_chem_heatmap_rgba_and_scalar, inferno_cliff_rgb, pack_gpu_scene,
+    viridis_rgb, GpuCameraUniform, GpuEdgeInstance, GpuNodeInstance, HeatmapLayer, NodeColorMode,
+    HEATMAP_DIM,
 };
 pub use electrostatics_esp::{
     analyze_electrostatics_esp, analyze_esp_with_prebuilt, export_dataset_esp_screen_csv,

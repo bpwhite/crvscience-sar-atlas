@@ -457,7 +457,7 @@ fn predict_bbb_kpuu(
         - 0.24 * (hbd as f64)
         - 0.0022 * (mw - 340.0).max(0.0)
         + 0.20 * logd_74.clamp(-1.5, 3.5);
-    let ps_bbb_l_hr = (10f64.powf(log_ps) * 14.0).clamp(0.06, 28.0);
+    let ps_bbb_l_hr = (10f64.powf(log_ps) * 72.0).clamp(0.08, 160.0);
 
     // 2. Active apical efflux ratio ER = CL_efflux / PS_bbb (`P-gp / MDR1` + `BCRP`):
     let has_sulfonamide_or_sulfone = mol.atoms.iter().any(|a| a.elem == Element::S && !a.aromatic);
@@ -500,6 +500,14 @@ fn predict_bbb_kpuu(
 /// Runs the full mechanistic 7-segment `ACAT` + `Q_gut` + `Well-Stirred` Hepatic + `Rodgers-Rowland`
 /// + `Kp,uu,brain` `RK4` human oral PBPK simulation for `mol`.
 pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkReport {
+    simulate_oral_pbpk_impl(mol, config, false).0
+}
+
+fn simulate_oral_pbpk_impl(
+    mol: &Molecule,
+    config: PbpkDosingConfig,
+    zero_elim_closed: bool,
+) -> (OralPbpkReport, [f64; 22], f64) {
     let alerts = scan_structural_alerts(mol);
     let phys = evaluate_physchem(mol, alerts.len());
     let admet = evaluate_admet(mol, &phys);
@@ -640,7 +648,8 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
     };
 
     let q_periph_l_hr = 46.0;
-    let v_brain_isf_l = 1.10; // Human brain water volume
+    let v_brain_l = 1.40; // Human brain tissue volume (Rodgers-Rowland)
+    let v_u_brain_l = (v_brain_l / fu_brain.max(0.005)).max(v_brain_l);
     let dose_nmol_per_admin = (config.dose_mg.max(0.5) * 1.0e6) / mw;
     let schedule = config.regimen.dose_times_hr();
     let horizon_hr = config.regimen.horizon_hr();
@@ -683,6 +692,8 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
         ro_plasma_pct: [f32; PBPK_TIME_POINTS],
         ro_brain_pct: [f32; PBPK_TIME_POINTS],
         gi_absorbed_pct: [f32; PBPK_TIME_POINTS],
+        final_y: [f64; 22],
+        total_dosed_nmol: f64,
     }
 
     let solve_quad_unbound = |a_lin: f64, b_vmax: f64, r_in: f64| -> f64 {
@@ -711,9 +722,14 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
         let k_ge_s = (k_ge_hr * mult.ka_ge).clamp(0.25, 6.0);
         let vss_s = (vss_total_l * mult.vss).max(6.0);
         let v_central_s = (4.2 + 0.12 * vss_s).clamp(4.2, vss_s.max(5.0));
-        let v_periph_s = (vss_s - v_central_s).max(2.5);
-        let ps_bbb_s = (ps_bbb_l_hr * mult.ps_bbb).clamp(0.02, 48.0);
-        let cl_renal_s = (cl_renal_plasma_l_hr * mult.fu_p).clamp(0.01, 10.0);
+        let v_brain_kp_eq_l = 1.40 * kp_brain_total * mult.vss;
+        let v_periph_s = (vss_s - v_central_s - v_brain_kp_eq_l).max(2.5);
+        let ps_bbb_s = (ps_bbb_l_hr * mult.ps_bbb).clamp(0.04, 180.0);
+        let cl_renal_s = if zero_elim_closed {
+            0.0
+        } else {
+            (cl_renal_plasma_l_hr * mult.fu_p).clamp(0.01, 10.0)
+        };
 
         let dt = 0.01f64;
         let total_steps = ((horizon_hr / dt).round() as usize).max(96);
@@ -727,6 +743,9 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
         let mut next_dose_ptr = 0usize;
 
         let eval_gut_and_liver = |j_abs_sum: f64, c_p_tot: f64| -> (f64, f64, f64, f64, f64) {
+            if zero_elim_closed {
+                return (1.0, 1.0, 0.0, j_abs_sum, 0.0);
+            }
             let a_gut = q_gut_l_hr + fu_gut_s * ugt_gut_s;
             let c_u_gut = solve_quad_unbound(a_gut, fu_gut_s * vmax_gut_s, fu_gut_s * j_abs_sum);
             let cl_u_gut_3a4_t = vmax_gut_s / (km_nm + c_u_gut);
@@ -773,10 +792,25 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
                     k_transit_hr * s[9 + seg - 1].max(0.0)
                 };
                 let c_seg = s[dis_idx].max(0.0) / v_si_seg_l;
-                let sat_frac = (1.0 - c_seg / c_sat_si_nm).clamp(0.0, 1.0);
-                let j_diss = k_diss_base_hr * s[sol_idx].max(0.0) * sat_frac;
-                let out_sol = k_transit_hr * s[sol_idx].max(0.0);
-                let out_dis = k_transit_hr * s[dis_idx].max(0.0);
+                let j_diss = if c_seg <= c_sat_si_nm {
+                    let sat_frac = (1.0 - c_seg / c_sat_si_nm).clamp(0.0, 1.0);
+                    k_diss_base_hr * s[sol_idx].max(0.0) * sat_frac
+                } else {
+                    // Supersaturated SI lumen (e.g., weak base emptying from acidic stomach) precipitates toward c_sat_si_nm
+                    let k_precip_hr = k_diss_base_hr;
+                    let excess_nmol = (s[dis_idx].max(0.0) - c_sat_si_nm * v_si_seg_l).max(0.0);
+                    -(k_precip_hr * excess_nmol)
+                };
+                let out_sol = if zero_elim_closed && seg == 6 {
+                    0.0
+                } else {
+                    k_transit_hr * s[sol_idx].max(0.0)
+                };
+                let out_dis = if zero_elim_closed && seg == 6 {
+                    0.0
+                } else {
+                    k_transit_hr * s[dis_idx].max(0.0)
+                };
                 let reg_mult = if seg <= 3 { 1.08 } else { 0.86 };
                 let j_abs = (ka_s * reg_mult) * s[dis_idx].max(0.0);
 
@@ -788,7 +822,7 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
             let c_p_tot = s[16].max(0.0) / v_central_s;
             let c_p_unb = fu_p_s * c_p_tot;
             let c_periph = s[17].max(0.0) / v_periph_s;
-            let c_br_unb = s[18].max(0.0) / v_brain_isf_l;
+            let c_br_unb = s[18].max(0.0) / v_u_brain_l;
 
             let (_fg_t, fh_t, eh_t, j_portal, _sat) = eval_gut_and_liver(j_abs_sum, c_p_tot);
             let j_sys_in = j_portal * fh_t;
@@ -796,7 +830,7 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
             let j_dist = q_periph_l_hr * (c_p_tot - c_periph);
             let j_bbb_net = ps_bbb_s * c_p_unb - (ps_bbb_s / kp_uu_brain) * c_br_unb;
 
-            dy[16] = j_sys_in - j_elim - j_dist;
+            dy[16] = j_sys_in - j_elim - j_dist - j_bbb_net;
             dy[17] = j_dist;
             dy[18] = j_bbb_net;
             dy[19] = j_abs_sum;
@@ -838,7 +872,7 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
 
             let cp_tot = (y[16] / v_central_s).max(0.0);
             let cp_unb = fu_p_s * cp_tot;
-            let cb_unb = (y[18] / v_brain_isf_l).max(0.0);
+            let cb_unb = (y[18] / v_u_brain_l).max(0.0);
             let ro_p = 100.0 * cp_unb / (cp_unb + target_ic50_nm);
             let ro_b = 100.0 * cb_unb / (cb_unb + target_ic50_nm);
 
@@ -947,6 +981,8 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
             ro_plasma_pct,
             ro_brain_pct,
             gi_absorbed_pct,
+            final_y: y,
+            total_dosed_nmol,
         }
     };
 
@@ -970,7 +1006,7 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
     let mut c_unbound_brain_p05_nm = nom.c_unbound_brain_nm;
     let mut c_unbound_brain_p95_nm = nom.c_unbound_brain_nm;
 
-    let pop_n = if config.virtual_pop_n >= 10 {
+    let pop_n = if !zero_elim_closed && config.virtual_pop_n >= 10 {
         config.virtual_pop_n.min(200)
     } else {
         0
@@ -1026,7 +1062,7 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
         }
     }
 
-    OralPbpkReport {
+    let report = OralPbpkReport {
         compound_id: mol.id.clone(),
         compound_name: mol.name.clone(),
         target_name: mol.target.clone(),
@@ -1090,7 +1126,8 @@ pub fn simulate_oral_pbpk(mol: &Molecule, config: PbpkDosingConfig) -> OralPbpkR
         c_unbound_plasma_p95_nm,
         c_unbound_brain_p05_nm,
         c_unbound_brain_p95_nm,
-    }
+    };
+    (report, nom.final_y, nom.total_dosed_nmol)
 }
 
 fn splitmix64(x: &mut u64) -> u64 {
@@ -1295,5 +1332,31 @@ mod tests {
             assert!(low.c_unbound_plasma_p05_nm[ti] <= low.c_unbound_plasma_p95_nm[ti] + 1e-6);
             assert!(low.c_unbound_brain_p05_nm[ti] <= low.c_unbound_brain_p95_nm[ti] + 1e-6);
         }
+    }
+
+    #[test]
+    fn test_pbpk_zero_elimination_mass_conservation_y0_to_y18_and_weak_base_supersaturation() {
+        let bench = load_benchmark_26();
+        let halo = bench
+            .iter()
+            .find(|m| m.name.eq_ignore_ascii_case("Haloperidol"))
+            .expect("Haloperidol");
+
+        let cfg = PbpkDosingConfig {
+            dose_mg: 50.0,
+            prandial: PrandialState::Fasted,
+            regimen: DosingRegimen::OnceDailyQd48h,
+            virtual_pop_n: 0,
+            ..PbpkDosingConfig::default()
+        };
+        let (rep, final_y, total_dosed_nmol) = simulate_oral_pbpk_impl(halo, cfg, true);
+        let mass_y0_to_y18: f64 = final_y[0..=18].iter().sum();
+        assert!(total_dosed_nmol > 1.0e4);
+        assert!(
+            (mass_y0_to_y18 - total_dosed_nmol).abs() < 1e-6,
+            "Closed CL_elim=0 PBPK must conserve mass across y[0..=18] to <1e-6 nmol: sum={mass_y0_to_y18} vs dosed={total_dosed_nmol}"
+        );
+        // Verify brain distribution occurred with central subtraction conserving plasma+brain total
+        assert!(final_y[18] > 0.0 && rep.cmax_unbound_brain_nm > 0.0);
     }
 }

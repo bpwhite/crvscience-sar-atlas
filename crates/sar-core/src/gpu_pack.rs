@@ -208,15 +208,16 @@ pub fn pack_gpu_scene(
 }
 
 /// Rasterizes a `256x256` RGBA8 chemical-space continuous field (`Potency`, `SALI`, `CNS-MPO`, or `Density`)
-/// over world bounds `[-100, 100]^2` using a separable Gaussian kernel.
-pub fn build_chem_heatmap_rgba(
+/// over world bounds `[-100, 100]^2` using a separable Gaussian kernel, returning both the colorized
+/// `RGBA8` texture and the underlying quantized `R8` scalar height field `[0, 255]`.
+pub fn build_chem_heatmap_rgba_and_scalar(
     mols: &[Molecule],
     coords: &[[f32; 2]],
     profiles: &[PhyschemProfile],
     edges: &[SaliCliffEdge],
     visible_mask: &[bool],
     layer: HeatmapLayer,
-) -> Vec<u8> {
+) -> (Vec<u8>, Vec<u8>) {
     let dim = HEATMAP_DIM;
     let mut num = vec![0.0f32; dim * dim];
     let mut den = vec![0.0f32; dim * dim];
@@ -308,6 +309,7 @@ pub fn build_chem_heatmap_rgba(
     let max_den = b_den.iter().copied().fold(1e-5f32, f32::max);
 
     let mut rgba = vec![0u8; dim * dim * 4];
+    let mut scalar = vec![0u8; dim * dim];
     for idx in 0..(dim * dim) {
         let d = b_den[idx];
         if d < 1e-4 {
@@ -328,8 +330,21 @@ pub fn build_chem_heatmap_rgba(
         rgba[idx * 4 + 1] = (rgb[1] * 255.0) as u8;
         rgba[idx * 4 + 2] = (rgb[2] * 255.0) as u8;
         rgba[idx * 4 + 3] = (coverage * 215.0) as u8;
+        scalar[idx] = (intensity * 255.0).round().clamp(0.0, 255.0) as u8;
     }
-    rgba
+    (rgba, scalar)
+}
+
+/// Convenience wrapper returning only the colorized `256x256` RGBA8 chemical-space heatmap texture.
+pub fn build_chem_heatmap_rgba(
+    mols: &[Molecule],
+    coords: &[[f32; 2]],
+    profiles: &[PhyschemProfile],
+    edges: &[SaliCliffEdge],
+    visible_mask: &[bool],
+    layer: HeatmapLayer,
+) -> Vec<u8> {
+    build_chem_heatmap_rgba_and_scalar(mols, coords, profiles, edges, visible_mask, layer).0
 }
 
 pub fn viridis_rgb(t: f32) -> [f32; 3] {

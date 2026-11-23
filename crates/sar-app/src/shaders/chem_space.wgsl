@@ -38,6 +38,9 @@ var t_heatmap: texture_2d<f32>;
 @group(0) @binding(2)
 var s_heatmap: sampler;
 
+@group(0) @binding(3)
+var t_scalar: texture_2d<f32>;
+
 fn world_to_ndc(world_xy: vec2<f32>) -> vec2<f32> {
     let shifted = (world_xy - cam.pan) * cam.zoom;
     let sx = shifted.x / max(cam.aspect * 100.0, 1e-4);
@@ -93,9 +96,9 @@ fn fs_heatmap(in: HeatmapVarying) -> @location(0) vec4<f32> {
     if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && cam.heatmap_alpha > 0.01) {
         let tex_uv = vec2<f32>(uv.x, uv.y);
         let h = textureSample(t_heatmap, s_heatmap, tex_uv);
-        let lum = dot(h.rgb, vec3<f32>(0.299, 0.587, 0.114));
-        let iso = abs(fract(lum * 7.0) - 0.5);
-        let contour = (1.0 - smoothstep(0.0, 0.055, iso)) * h.a * 0.22;
+        let scalar = textureSample(t_scalar, s_heatmap, tex_uv).r;
+        let iso = abs(fract(scalar * 7.0) - 0.5);
+        let contour = (1.0 - smoothstep(0.0, 0.055, iso)) * h.a * 0.24;
         let field_alpha = clamp(h.a * cam.heatmap_alpha, 0.0, 0.85);
         col = mix(col, h.rgb + vec3<f32>(contour), field_alpha);
     }
@@ -185,8 +188,11 @@ fn vs_node(@builtin(vertex_index) vid: u32, inst: NodeInput) -> NodeVarying {
         vec2<f32>(-1.0,  1.0),
     );
     let uv = corners[vid];
+    let px_per_world = max((cam.viewport_px.y * 0.5) * cam.zoom / 100.0, 1e-4);
+    let r_core_px = clamp(inst.radius_halo.x * px_per_world, 3.0, 18.0);
+    let r_core_world = r_core_px / px_per_world;
     let halo_expand = select(1.35, 2.02, inst.radius_halo.y > 0.5);
-    let r_world = inst.radius_halo.x * halo_expand;
+    let r_world = r_core_world * halo_expand;
     let world_pt = inst.pos + uv * r_world;
 
     var out: NodeVarying;
@@ -210,7 +216,7 @@ fn fs_node(in: NodeVarying) -> @location(0) vec4<f32> {
 
     // Halo rings: 1.0 = Warhead, 2.0 = PAINS, 3.0 = Selected, 4.0 = Pareto, 5.0 = SMARTS Substructure Hit
     if (in.halo_kind > 0.5) {
-        let is_pulsing = (in.halo_kind > 2.5 && in.halo_kind < 3.5) || in.halo_kind > 4.5;
+        let is_pulsing = in.halo_kind > 4.5;
         let pulse = select(0.0, 0.08 * sin(cam.time_sec * 4.2), is_pulsing);
         let ring_center = 1.44 + pulse;
         let ring_band = 1.0 - smoothstep(0.09, 0.20 + fw, abs(r - ring_center));

@@ -105,4 +105,24 @@ Licensed under the [GNU General Public License v3.0 or later (`GPL-3.0-or-later`
 - **Concept DOI**: [`10.5281/zenodo.24222390`](https://doi.org/10.5281/zenodo.24222390)
 - **Source Repository**: <https://github.com/bpwhite/crvscience-sar-atlas>
 
-See [`CITATION.cff`](CITATION.cff) for machine-readable BibTeX/CFF metadata and [`validation/README.md`](validation/README.md) for the headless validation benchmark outputs (`cargo test -p sar-core --test headless_validation`).
+See [`CITATION.cff`](CITATION.cff) for machine-readable BibTeX/CFF metadata, [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for interactive controls & workflows, [`docs/SCIENTIFIC_METHODS.md`](docs/SCIENTIFIC_METHODS.md) for physical/alchemical equations, and [`validation/README.md`](validation/README.md) for the headless validation benchmark outputs (`cargo test --workspace`).
+
+## Controls, Hotkeys & Viewports
+
+| Scope | Control / Shortcut | Action |
+| :--- | :--- | :--- |
+| Global | `Ctrl + K` | Command palette across all 39 modules & loaded compounds |
+| Global | `Ctrl + B` / `Ctrl + I` / `Ctrl + F` | Toggle Compound/MRU, Lead Inspector, and SMARTS Filter panels |
+| Global | `F1` / `F11` / `Escape` | About modal / Zen full-canvas mode / Dismiss active overlay |
+| 2D Chem-Space | Left-drag / Wheel / Click | Pan / Zoom (`[3.0, 18.0]` px clamped glyphs + `t_scalar` iso-contours) / Select lead |
+| 2D Chem-Space | Idle / Fallback | Zero idle `request_repaint()` when static; automatic 2D `egui::Painter` fallback when `wgpu` unavailable |
+| 3D Viewports | Left-drag / Right-drag / Wheel | 3D trackball orbit / Screen pan / Zoom (`X/Y/Z` triad gizmo + dynamic Å scale bar) |
+| 3D Viewports | Double-click / Atom hover | Fit-to-Molecule dynamic bounding-sphere camera / Element, index & Gasteiger charge tooltip |
+| 3D Conformer | `DG Trials` (`2..=20`) | Debounced on `drag_stopped()` / `lost_focus()` to prevent mid-drag conformer recomputation |
+
+## Verification & Validation Telemetry
+
+- **Workspace Suite**: `cargo test --workspace` (`72 passed; 0 failed`: `60` `sar-core` unit tests, `3` `headless_validation` benchmarks, `9` `sar-app` unit/GUI tests).
+- **Oral PBPK Conservation (`pbpk_oral.rs`)**: Closed-system zero-elimination mass across `y[0..=18]` conserves dosed nmol to `< 1e-6` nmol, with brain partitioning `V_u,brain = V_brain / fu_brain` and supersaturated luminal weak-base precipitation above `c_sat_si_nm`.
+- **RBFE & Solvation (`rbfe_network.rs`)**: `solve_bennett_bar` matches exact analytical Shirts-Chodera SE without artificial `+0.002` floor bias (`1e-12` floor only), and Born solvation scales as `1 / r_eff`.
+- **Benchmark (`validation/sar_atlas_validation_summary.json`)**: `26` curated molecules (`mean QED = 0.715`, `mean CNS-MPO = 4.87`, `11` Pareto leads), `Haloperidol Kp,uu,brain = 0.923` vs. `Lapatinib Kp,uu,brain = 0.062`, and Lomap Dopamine D2 cycle closure `0.000 kcal/mol` post-MLE (`11` nodes, `15` edges, `6` cycles).

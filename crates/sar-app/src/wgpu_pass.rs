@@ -29,6 +29,7 @@ pub struct ChemSpaceGpuResources {
     pub bind_group: wgpu::BindGroup,
     pub uniform_buffer: wgpu::Buffer,
     pub heatmap_texture: wgpu::Texture,
+    pub scalar_texture: wgpu::Texture,
     pub node_buffer: wgpu::Buffer,
     pub node_capacity: usize,
     pub active_nodes: u32,
@@ -82,6 +83,17 @@ impl ChemSpaceGpuResources {
             view_formats: &[],
         });
         let heatmap_view = heatmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let scalar_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sar_chem_scalar_tex"),
+            size: heatmap_extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let scalar_view = scalar_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let heatmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("sar_chem_heatmap_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -121,6 +133,16 @@ impl ChemSpaceGpuResources {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -139,6 +161,10 @@ impl ChemSpaceGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&heatmap_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&scalar_view),
                 },
             ],
         });
@@ -290,6 +316,7 @@ impl ChemSpaceGpuResources {
                 bind_group,
                 uniform_buffer,
                 heatmap_texture,
+                scalar_texture,
                 node_buffer,
                 node_capacity: initial_cap,
                 active_nodes: 0,
@@ -306,6 +333,7 @@ pub struct ChemSpacePaintCallback {
     pub nodes: Arc<Vec<GpuNodeInstance>>,
     pub edges: Arc<Vec<GpuEdgeInstance>>,
     pub new_heatmap_rgba: Option<Arc<Vec<u8>>>,
+    pub new_heatmap_scalar: Option<Arc<Vec<u8>>>,
 }
 
 impl egui_wgpu::CallbackTrait for ChemSpacePaintCallback {
@@ -331,6 +359,24 @@ impl egui_wgpu::CallbackTrait for ChemSpacePaintCallback {
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(4 * (HEATMAP_DIM as u32)),
+                        rows_per_image: Some(HEATMAP_DIM as u32),
+                    },
+                    wgpu::Extent3d {
+                        width: HEATMAP_DIM as u32,
+                        height: HEATMAP_DIM as u32,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+        }
+        if let Some(scalar) = &self.new_heatmap_scalar {
+            if scalar.len() == HEATMAP_DIM * HEATMAP_DIM {
+                queue.write_texture(
+                    res.scalar_texture.as_image_copy(),
+                    scalar,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(HEATMAP_DIM as u32),
                         rows_per_image: Some(HEATMAP_DIM as u32),
                     },
                     wgpu::Extent3d {

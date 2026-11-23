@@ -725,7 +725,7 @@ pub fn solve_bennett_bar(
 
     let term0 = (f0_sq_sum / n0) / (mean_f0 * mean_f0) - 1.0;
     let term1 = (f1_sq_sum / n1) / (mean_f1 * mean_f1) - 1.0;
-    let var_reduced = ((term0 / n0).max(0.0) + (term1 / n1).max(0.0) + 0.002 / (n0 + n1)).max(1e-8);
+    let var_reduced = ((term0 / n0).max(0.0) + (term1 / n1).max(0.0)).max(1e-12);
     let std_err_kcal = var_reduced.sqrt() / beta;
 
     (dg_bar, std_err_kcal, overlap)
@@ -751,8 +751,19 @@ fn estimate_aqueous_solvation_dg_kcal(mol: &Molecule) -> f64 {
     let q = molecule_formal_charge(mol).abs() as f64;
     let polar = -0.068 * prof.tpsa - 0.85 * (prof.hbd as f64) - 0.38 * (prof.hba as f64);
     let nonpolar = 0.42 * prof.clogp + 0.012 * (prof.heavy_atoms as f64);
-    let ionic_born = -14.5 * q * q;
-    (polar + nonpolar + ionic_born).clamp(-45.0, 6.0)
+    // Spherical cavity effective radius (Angstrom) from Bondi vdW volumes + first-shell solvent offset
+    let vdw_r3_sum: f64 = mol
+        .atoms
+        .iter()
+        .map(|a| {
+            let r = crate::conformer3d::bondi_vdw_radius(a.elem) as f64;
+            r * r * r
+        })
+        .sum();
+    let r_eff = vdw_r3_sum.max(1.0).cbrt() + 0.65;
+    // Born continuum electrostatics: dG_Born = -166.0 * (1 - 1/78.4) * q^2 / r_eff (kcal/mol)
+    let ionic_born = -163.88 * q * q / r_eff;
+    (polar + nonpolar + ionic_born).clamp(-95.0, 6.0)
 }
 
 /// Evaluates the stratified multi-`lambda` 2-leg (`Complex` vs `Solvent`) alchemical perturbation `src -> dst`
@@ -2062,5 +2073,51 @@ mod tests {
         let rep_10 = run_rbfe_network_campaign(&egfr_10_ds, &explicit_cfg);
         assert_eq!(rep_10.nodes.len(), 12);
         assert!(rep_10.nodes.iter().any(|nd| nd.compound_id.starts_with("EGFR-Q")));
+    }
+
+    #[test]
+    fn test_solve_bennett_bar_exact_se_without_floor_distortion_and_born_scaling() {
+        // High-overlap tight work distribution where analytical Bennett SE is ~0.008 kcal/mol;
+        // an ad-hoc +0.002/(n0+n1) variance floor would distort SE substantially.
+        let n = 64usize;
+        let dg_true = -1.50_f64;
+        let sig = 0.04_f64;
+        let diss = 0.5 * sig * sig / RBFE_RT_298K_KCAL;
+        let mut fwd = Vec::with_capacity(n);
+        let mut rev = Vec::with_capacity(n);
+        for s in 0..n {
+            fwd.push(dg_true + diss + sig * deterministic_normal(7, s));
+            rev.push(-dg_true + diss + sig * deterministic_normal(19, s));
+        }
+        let beta = 1.0 / RBFE_RT_298K_KCAL;
+        let (dg_bar, std_err, _ov) = solve_bennett_bar(&fwd, &rev, RBFE_RT_298K_KCAL);
+        let c = beta * dg_bar;
+        let fermi = |x: f64| 1.0 / (1.0 + x.clamp(-60.0, 60.0).exp());
+        let f0: Vec<f64> = fwd.iter().map(|&w| fermi(beta * w - c)).collect();
+        let f1: Vec<f64> = rev.iter().map(|&w| fermi(beta * w + c)).collect();
+        let m0 = f0.iter().sum::<f64>() / (n as f64);
+        let s0 = f0.iter().map(|v| v * v).sum::<f64>() / (n as f64);
+        let m1 = f1.iter().sum::<f64>() / (n as f64);
+        let s1 = f1.iter().map(|v| v * v).sum::<f64>() / (n as f64);
+        let exact_se = (((s0 / (m0 * m0) - 1.0) / (n as f64)).max(0.0)
+            + ((s1 / (m1 * m1) - 1.0) / (n as f64)).max(0.0))
+        .max(1e-12)
+        .sqrt()
+            / beta;
+        assert!(
+            (std_err - exact_se).abs() < 1e-6,
+            "BAR SE must match exact Bennett asymptotic SE ({exact_se}), got {std_err}"
+        );
+        assert!(std_err < 0.015, "Uninflated SE should be small (<0.015), got {std_err}");
+
+        // Verify Born ionic solvation scales inversely with molecular effective radius r_eff
+        let small_ion = crate::parse_smiles("C[NH3+]").unwrap();
+        let large_ion = crate::parse_smiles("CCCCCCCC[NH3+]").unwrap();
+        let dg_small = estimate_aqueous_solvation_dg_kcal(&small_ion);
+        let dg_large = estimate_aqueous_solvation_dg_kcal(&large_ion);
+        assert!(
+            dg_small < dg_large - 8.0,
+            "Smaller ion dG_solv ({dg_small}) must be substantially more favorable than larger ion ({dg_large})"
+        );
     }
 }

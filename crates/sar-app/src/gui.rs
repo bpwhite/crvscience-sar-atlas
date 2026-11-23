@@ -110,7 +110,8 @@ use sar_core::{
     build_curated_ro3_seed_molecule, design_macrocycles, design_prodrugs, export_dataset_pbpk_csv,
     export_grown_fragments_csv, export_macrocycles_csv, export_pbpk_timecourse_csv, export_prodrugs_csv,
     format_prodrugs_sdf, simulate_oral_pbpk, summarize_dataset_oral_pbpk, export_metabolites_csv,
-    format_grown_fragments_sdf, format_macrocycles_3d_sdf, grow_fragment_along_vector, build_chem_heatmap_rgba,
+    format_grown_fragments_sdf, format_macrocycles_3d_sdf, grow_fragment_along_vector,
+    build_chem_heatmap_rgba_and_scalar,
     compile_smarts, design_protac_series, export_protac_candidates_csv, export_warhead_swaps_csv,
     evaluate_3d_summary_profile, export_3d_overlay_hits_csv, format_3d_conformer_sdf, format_3d_overlay_sdf,
     generate_3d_conformer_ensemble, screen_3d_overlay_library, detect_and_align_series_mcs,
@@ -786,6 +787,7 @@ pub struct SarAtlasGuiApp {
     conf3d_zoom: f32,
     conf3d_pan: [f32; 2],
     conf3d_trial_count: usize,
+    conf3d_pending_trial_count: usize,
     conf3d_selected_conf_idx: usize,
     conf3d_selected_hit_idx: usize,
     conf3d_cached_key: String,
@@ -1181,6 +1183,7 @@ pub struct SarAtlasGuiApp {
     gpu_nodes: Arc<Vec<GpuNodeInstance>>,
     gpu_edges: Arc<Vec<GpuEdgeInstance>>,
     pending_heatmap: Option<Arc<Vec<u8>>>,
+    pending_heatmap_scalar: Option<Arc<Vec<u8>>>,
     scene_dirty: bool,
     heatmap_dirty: bool,
 
@@ -1369,6 +1372,7 @@ impl SarAtlasGuiApp {
             conf3d_zoom: 24.0,
             conf3d_pan: [0.0, 0.0],
             conf3d_trial_count: 8,
+            conf3d_pending_trial_count: 8,
             conf3d_selected_conf_idx: 0,
             conf3d_selected_hit_idx: 0,
             conf3d_cached_key: String::new(),
@@ -1720,6 +1724,7 @@ impl SarAtlasGuiApp {
             gpu_nodes: Arc::new(Vec::new()),
             gpu_edges: Arc::new(Vec::new()),
             pending_heatmap: None,
+            pending_heatmap_scalar: None,
             scene_dirty: true,
             heatmap_dirty: true,
             io_path_buf: "data/benchmark_26.sdf".to_string(),
@@ -2730,7 +2735,7 @@ impl SarAtlasGuiApp {
         }
 
         if self.heatmap_dirty {
-            let rgba = build_chem_heatmap_rgba(
+            let (rgba, scalar) = build_chem_heatmap_rgba_and_scalar(
                 &self.ds.mols,
                 &self.ds.chem_coords,
                 &self.ds.profiles,
@@ -2739,6 +2744,7 @@ impl SarAtlasGuiApp {
                 self.heatmap_layer,
             );
             self.pending_heatmap = Some(Arc::new(rgba));
+            self.pending_heatmap_scalar = Some(Arc::new(scalar));
             self.heatmap_dirty = false;
         }
     }
@@ -5778,11 +5784,13 @@ impl SarAtlasGuiApp {
             self.pan[0] -= d.x * world_per_px;
             self.pan[1] += d.y * world_per_px;
         }
+        let mut wheel_zoom_active = false;
         if response.hovered() {
             let scroll_y = ctx.input(|i| i.smooth_scroll_delta.y);
             if scroll_y.abs() > 0.1 {
                 let factor = (1.0 + scroll_y * 0.0022).clamp(0.80, 1.25);
                 self.zoom = (self.zoom * factor).clamp(0.25, 18.0);
+                wheel_zoom_active = true;
             }
         }
 
@@ -5848,13 +5856,108 @@ impl SarAtlasGuiApp {
                     nodes: Arc::clone(&self.gpu_nodes),
                     edges: Arc::clone(&self.gpu_edges),
                     new_heatmap_rgba: self.pending_heatmap.take(),
+                    new_heatmap_scalar: self.pending_heatmap_scalar.take(),
                 },
             );
             ui.painter().add(cb);
-            ctx.request_repaint();
+            let has_pulsing_halo = self.smarts_hit_count > 0
+                && self.smarts_error.is_none()
+                && self.gpu_nodes.iter().any(|n| n.halo_kind > 4.5);
+            if should_request_chemspace_repaint(
+                has_pulsing_halo,
+                response.dragged(),
+                wheel_zoom_active,
+                self.camera_autofit_pending,
+            ) {
+                ctx.request_repaint();
+            }
         } else {
-            ui.painter()
-                .rect_filled(rect, 6.0, Color32::from_rgb(12, 18, 30));
+            let painter = ui.painter().with_clip_rect(rect);
+            painter.rect_filled(rect, 6.0, Color32::from_rgb(12, 18, 30));
+
+            let world_to_screen = |w: [f32; 2]| -> Pos2 {
+                let ndc_x = ((w[0] - self.pan[0]) * self.zoom) / (aspect * 100.0).max(1e-4);
+                let ndc_y = ((w[1] - self.pan[1]) * self.zoom) / 100.0;
+                Pos2::new(
+                    rect.center().x + ndc_x * rect.width() * 0.5,
+                    rect.center().y - ndc_y * rect.height() * 0.5,
+                )
+            };
+
+            let grid_col = Color32::from_rgb(26, 36, 56);
+            for g in (-100..=100).step_by(25) {
+                let gv = g as f32;
+                let a = world_to_screen([gv, -100.0]);
+                let b = world_to_screen([gv, 100.0]);
+                painter.line_segment([a, b], Stroke::new(1.0_f32, grid_col));
+                let c = world_to_screen([-100.0, gv]);
+                let d = world_to_screen([100.0, gv]);
+                painter.line_segment([c, d], Stroke::new(1.0_f32, grid_col));
+            }
+
+            for e in self.gpu_edges.iter() {
+                let p0 = world_to_screen(e.p0);
+                let p1 = world_to_screen(e.p1);
+                let is_cliff = e.color[0] > 0.75;
+                let col = Color32::from_rgba_unmultiplied(
+                    (e.color[0] * 255.0) as u8,
+                    (e.color[1] * 255.0) as u8,
+                    (e.color[2] * 255.0) as u8,
+                    (e.color[3] * 255.0) as u8,
+                );
+                painter.line_segment(
+                    [p0, p1],
+                    Stroke::new(if is_cliff { 2.2_f32 } else { 1.1_f32 }, col),
+                );
+            }
+
+            let px_per_world = (rect.height().max(1.0) * 0.5 * self.zoom / 100.0).max(1e-4);
+            for nd in self.gpu_nodes.iter() {
+                let pos = world_to_screen(nd.pos);
+                if !rect.expand(24.0).contains(pos) {
+                    continue;
+                }
+                let r_px = (nd.radius * px_per_world).clamp(3.0, 18.0);
+                let col = Color32::from_rgba_unmultiplied(
+                    (nd.color[0] * 255.0) as u8,
+                    (nd.color[1] * 255.0) as u8,
+                    (nd.color[2] * 255.0) as u8,
+                    (nd.color[3] * 255.0) as u8,
+                );
+                if nd.halo_kind > 0.5 {
+                    let h_col = if nd.halo_kind < 1.5 {
+                        Color32::from_rgb(250, 173, 40)
+                    } else if nd.halo_kind < 2.5 {
+                        Color32::from_rgb(245, 61, 82)
+                    } else if nd.halo_kind < 3.5 || nd.halo_kind >= 4.5 {
+                        Color32::from_rgb(56, 224, 250)
+                    } else {
+                        Color32::from_rgb(82, 245, 163)
+                    };
+                    painter.circle_stroke(pos, r_px * 1.42, Stroke::new(1.8_f32, h_col));
+                }
+                painter.circle_filled(pos, r_px, col);
+                painter.circle_stroke(pos, r_px, Stroke::new(1.0_f32, Color32::from_rgb(15, 23, 42)));
+            }
+
+            let banner_rect = Rect::from_min_size(
+                Pos2::new(rect.left() + 10.0, rect.top() + 10.0),
+                Vec2::new(372.0, 24.0),
+            );
+            painter.rect_filled(banner_rect, 4.0, Color32::from_rgba_unmultiplied(15, 23, 42, 230));
+            painter.rect_stroke(
+                banner_rect,
+                4.0,
+                Stroke::new(1.0_f32, Color32::from_rgb(245, 158, 11)),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                banner_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "wgpu adapter inactive - 2D software Painter fallback",
+                egui::FontId::monospace(10.5),
+                Color32::from_rgb(253, 224, 71),
+            );
         }
 
         paint_sali_heatmap_colorbar(
@@ -9755,9 +9858,13 @@ impl SarAtlasGuiApp {
 
             ui.separator();
             ui.label("DG Trials:");
-            let mut tc = self.conf3d_trial_count as u32;
-            if ui.add(egui::Slider::new(&mut tc, 2..=20)).changed() {
-                self.conf3d_trial_count = tc as usize;
+            let mut tc = self.conf3d_pending_trial_count as u32;
+            let tc_resp = ui.add(egui::Slider::new(&mut tc, 2..=20));
+            if tc_resp.changed() {
+                self.conf3d_pending_trial_count = tc as usize;
+            }
+            if tc_resp.drag_stopped() || tc_resp.lost_focus() {
+                self.conf3d_trial_count = self.conf3d_pending_trial_count;
             }
 
             if ui
@@ -9950,7 +10057,7 @@ impl SarAtlasGuiApp {
                                 .color(Color32::from_rgb(56, 189, 248)),
                         );
                         ui.small(
-                            "Left-drag: 3D Trackball Orbit  |  Right-drag: Pan  |  Scroll: Zoom  |  Depth-sorted perspective shading",
+                            "Left-drag: 3D Trackball Orbit  |  Right-drag: Pan  |  Scroll: Zoom  |  Double-click: Fit Molecule",
                         );
 
                         let (vp_rect, vp_resp) = ui.allocate_exact_size(
@@ -9971,7 +10078,7 @@ impl SarAtlasGuiApp {
                             let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
                             if scroll_y.abs() > 0.1 {
                                 self.conf3d_zoom =
-                                    (self.conf3d_zoom * (1.0 + scroll_y * 0.0025)).clamp(8.0, 68.0);
+                                    (self.conf3d_zoom * (1.0 + scroll_y * 0.0025)).clamp(6.0, 68.0);
                             }
                         }
 
@@ -10005,7 +10112,20 @@ impl SarAtlasGuiApp {
                             None
                         };
 
-                        paint_3d_molecular_viewport(
+                        if vp_resp.double_clicked() {
+                            self.conf3d_yaw = 0.52;
+                            self.conf3d_pitch = 0.34;
+                            self.conf3d_pan = [0.0, 0.0];
+                            self.conf3d_zoom = fit_3d_bounding_zoom(
+                                vp_rect,
+                                q_coords,
+                                hit_bundle.as_ref().map(|hb| hb.1),
+                                6.0,
+                                68.0,
+                            );
+                        }
+
+                        let hovered_atom = paint_3d_molecular_viewport(
                             ui.painter(),
                             vp_rect,
                             &query_mol,
@@ -10020,7 +10140,9 @@ impl SarAtlasGuiApp {
                             self.conf3d_color_by_esp,
                             self.conf3d_show_vdw_halos,
                             self.conf3d_show_rocs_colors,
+                            vp_resp.hover_pos(),
                         );
+                        show_3d_atom_hover_tooltip(vp_resp, hovered_atom);
 
                         if self.conf3d_view_overlay_mode {
                             if let Some(h) = hits.get(active_hit_idx) {
@@ -10286,6 +10408,47 @@ fn esp_charge_color(q: f32) -> [u8; 3] {
     }
 }
 
+fn should_request_chemspace_repaint(
+    has_pulsing_halo: bool,
+    dragging: bool,
+    wheel_zoom: bool,
+    autofit_pending: bool,
+) -> bool {
+    has_pulsing_halo || dragging || wheel_zoom || autofit_pending
+}
+
+fn fit_3d_bounding_zoom(
+    rect: Rect,
+    coords_a: &[[f32; 3]],
+    coords_b: Option<&[[f32; 3]]>,
+    min_zoom: f32,
+    max_zoom: f32,
+) -> f32 {
+    let mut r_bound = 3.5f32;
+    for p in coords_a {
+        r_bound = r_bound.max((p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt());
+    }
+    if let Some(cb) = coords_b {
+        for p in cb {
+            r_bound = r_bound.max((p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt());
+        }
+    }
+    ((rect.width().min(rect.height()) * 0.36) / r_bound.max(3.5)).clamp(min_zoom, max_zoom)
+}
+
+fn show_3d_atom_hover_tooltip(
+    resp: egui::Response,
+    hovered_atom: Option<(bool, usize, &'static str, f32)>,
+) {
+    if let Some((is_hit_mol, atom_idx, sym, g_chg)) = hovered_atom {
+        let mol_tag = if is_hit_mol { "Hit" } else { "Query" };
+        resp.on_hover_ui_at_pointer(|ui| {
+            ui.label(RichText::new(format!("{mol_tag} Atom #{atom_idx} ({sym})")).strong());
+            ui.label(format!("Gasteiger charge: {g_chg:+.4} e"));
+        });
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_3d_molecular_viewport(
     painter: &egui::Painter,
@@ -10302,7 +10465,8 @@ fn paint_3d_molecular_viewport(
     color_by_esp: bool,
     show_vdw_halos: bool,
     show_rocs_colors: bool,
-) {
+    hover_pos: Option<Pos2>,
+) -> Option<(bool, usize, &'static str, f32)> {
     let bg = Color32::from_rgb(11, 17, 32);
     painter.rect_filled(rect, 6.0, bg);
     let painter = painter.with_clip_rect(rect);
@@ -10319,10 +10483,22 @@ fn paint_3d_molecular_viewport(
         [x1, y2, z2]
     };
 
+    let mut r_bound = 4.0f32;
+    for p in query_coords.iter() {
+        r_bound = r_bound.max((p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt());
+    }
+    if let Some((_, h_coords, _, _)) = hit_bundle {
+        for p in h_coords.iter() {
+            r_bound = r_bound.max((p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt());
+        }
+    }
+
     let center = Pos2::new(rect.center().x + pan[0], rect.center().y + pan[1]);
-    let cam_dist = 26.0f32;
+    // Dynamic bounding-sphere camera distance eliminates macrocycle & PROTAC near-plane clipping
+    let cam_dist = (r_bound * 3.2).max(26.0);
+    let min_depth = (cam_dist * 0.25).max(5.0);
     let project = |cam: [f32; 3]| -> (Pos2, f32) {
-        let persp = (cam_dist / (cam_dist - cam[2]).max(5.0)).clamp(0.55, 1.85);
+        let persp = (cam_dist / (cam_dist - cam[2]).max(min_depth)).clamp(0.45, 2.20);
         let s = zoom * persp;
         (Pos2::new(center.x + cam[0] * s, center.y - cam[1] * s), persp)
     };
@@ -10356,10 +10532,12 @@ fn paint_3d_molecular_viewport(
             rgb: [u8; 3],
             alpha: u8,
             label: Option<&'static str>,
+            is_hovered: bool,
         },
     }
 
     let mut prims: Vec<Prim3d> = Vec::with_capacity(256);
+    let mut hovered_hit: Option<(bool, usize, &'static str, f32, f32)> = None;
 
     let mut push_molecule = |mol: &Molecule,
                              coords: &[[f32; 3]],
@@ -10414,7 +10592,8 @@ fn paint_3d_molecular_viewport(
             let (p1, persp1) = scr_pts[b.a];
             let (p2, persp2) = scr_pts[b.b];
             let z_mid = 0.5 * (cam_pts[b.a][2] + cam_pts[b.b][2]);
-            let depth_fog = ((z_mid + 8.0) / 16.0).clamp(0.48, 1.0);
+            let depth_fog =
+                (0.72 + 0.32 * (z_mid / r_bound.max(4.0)).clamp(-1.0, 1.0)).clamp(0.42, 1.04);
             let base_rgb = if is_hit {
                 [232, 121, 249]
             } else {
@@ -10447,14 +10626,26 @@ fn paint_3d_molecular_viewport(
                 elem.cpk_rgb(true)
             };
             let z = cam_pts[i][2];
-            let depth_fog = ((z + 8.0) / 16.0).clamp(0.55, 1.05);
+            let depth_fog =
+                (0.72 + 0.32 * (z / r_bound.max(4.0)).clamp(-1.0, 1.0)).clamp(0.45, 1.06);
             let shaded = [
                 ((base_rgb[0] as f32 * depth_fog).min(255.0)) as u8,
                 ((base_rgb[1] as f32 * depth_fog).min(255.0)) as u8,
                 ((base_rgb[2] as f32 * depth_fog).min(255.0)) as u8,
             ];
             let (sp_pos, persp) = scr_pts[i];
-            let rad = (zoom * 0.27 * persp).clamp(3.6, 12.5);
+            let rad = (zoom * 0.27 * persp).clamp(3.6, 13.5);
+            let chg = charges.get(i).copied().unwrap_or(0.0);
+            let is_hovered = hover_pos.map_or(false, |hp| {
+                let d2 = (hp.x - sp_pos.x).powi(2) + (hp.y - sp_pos.y).powi(2);
+                let hit_r = rad.max(6.5);
+                if d2 <= hit_r * hit_r && hovered_hit.map_or(true, |prev| z > prev.4) {
+                    hovered_hit = Some((is_hit, i, elem.symbol(), chg, z));
+                    true
+                } else {
+                    false
+                }
+            });
             let lbl = if elem != Element::C && zoom >= 18.0 {
                 Some(elem.symbol())
             } else {
@@ -10467,6 +10658,7 @@ fn paint_3d_molecular_viewport(
                 rgb: shaded,
                 alpha: if is_hit { 215 } else { 250 },
                 label: lbl,
+                is_hovered,
             });
         }
     };
@@ -10563,20 +10755,46 @@ fn paint_3d_molecular_viewport(
                 rgb,
                 alpha,
                 label,
+                is_hovered,
                 ..
             } => {
+                // Depth-cued ambient limb + directional Lambert sphere + crisp specular highlight
+                let rim_col = Color32::from_rgba_unmultiplied(
+                    (rgb[0] as f32 * 0.44) as u8,
+                    (rgb[1] as f32 * 0.44) as u8,
+                    (rgb[2] as f32 * 0.44) as u8,
+                    alpha,
+                );
+                painter.circle_filled(pos, radius, rim_col);
                 painter.circle_filled(
-                    pos,
-                    radius,
+                    Pos2::new(pos.x - radius * 0.08, pos.y - radius * 0.08),
+                    (radius * 0.88).max(1.2),
                     Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], alpha),
                 );
-                // Specular highlight dot for crisp 3D depth perception
-                let spec_pos = Pos2::new(pos.x - radius * 0.30, pos.y - radius * 0.30);
+                let mid_col = Color32::from_rgba_unmultiplied(
+                    (rgb[0] as f32 + (255.0 - rgb[0] as f32) * 0.36) as u8,
+                    (rgb[1] as f32 + (255.0 - rgb[1] as f32) * 0.36) as u8,
+                    (rgb[2] as f32 + (255.0 - rgb[2] as f32) * 0.36) as u8,
+                    alpha,
+                );
+                painter.circle_filled(
+                    Pos2::new(pos.x - radius * 0.22, pos.y - radius * 0.22),
+                    (radius * 0.56).max(1.0),
+                    mid_col,
+                );
+                let spec_pos = Pos2::new(pos.x - radius * 0.32, pos.y - radius * 0.32);
                 painter.circle_filled(
                     spec_pos,
-                    (radius * 0.32).max(1.2),
-                    Color32::from_rgba_unmultiplied(255, 255, 255, 95),
+                    (radius * 0.26).max(1.2),
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 165),
                 );
+                if is_hovered {
+                    painter.circle_stroke(
+                        pos,
+                        radius + 2.5,
+                        Stroke::new(1.8_f32, Color32::from_rgb(56, 224, 250)),
+                    );
+                }
                 if let Some(sym) = label {
                     painter.text(
                         pos,
@@ -10609,6 +10827,35 @@ fn paint_3d_molecular_viewport(
         );
     }
 
+    // Bottom-right dynamic Angstrom scale bar
+    let ang_bar = if zoom >= 36.0 {
+        2.0f32
+    } else if zoom >= 16.0 {
+        5.0f32
+    } else {
+        10.0f32
+    };
+    let bar_px = (ang_bar * zoom).clamp(24.0, (rect.width() * 0.30).max(24.0));
+    let bar_r = Pos2::new(rect.right() - 16.0, rect.bottom() - 18.0);
+    let bar_l = Pos2::new(bar_r.x - bar_px, bar_r.y);
+    let bar_col = Color32::from_rgb(203, 213, 225);
+    painter.line_segment([bar_l, bar_r], Stroke::new(2.0_f32, bar_col));
+    painter.line_segment(
+        [Pos2::new(bar_l.x, bar_l.y - 4.0), Pos2::new(bar_l.x, bar_l.y + 4.0)],
+        Stroke::new(1.6_f32, bar_col),
+    );
+    painter.line_segment(
+        [Pos2::new(bar_r.x, bar_r.y - 4.0), Pos2::new(bar_r.x, bar_r.y + 4.0)],
+        Stroke::new(1.6_f32, bar_col),
+    );
+    painter.text(
+        Pos2::new(0.5 * (bar_l.x + bar_r.x), bar_r.y - 7.0),
+        egui::Align2::CENTER_BOTTOM,
+        format!("{ang_bar:.0} \u{00C5}"),
+        egui::FontId::monospace(9.5),
+        bar_col,
+    );
+
     painter.rect(
         rect,
         6.0,
@@ -10616,6 +10863,7 @@ fn paint_3d_molecular_viewport(
         Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
         egui::StrokeKind::Inside,
     );
+    hovered_hit.map(|(is_h, idx, sym, chg, _)| (is_h, idx, sym, chg))
 }
 
 fn paint_npr_shape_triangle(
@@ -13769,7 +14017,20 @@ impl SarAtlasGuiApp {
                             None
                         };
 
-                        paint_3d_molecular_viewport(
+                        if vp_resp.double_clicked() {
+                            self.macro_yaw_3d = 0.52;
+                            self.macro_pitch_3d = 0.34;
+                            self.macro_pan_3d = [0.0, 0.0];
+                            self.macro_zoom_3d = fit_3d_bounding_zoom(
+                                vp_rect,
+                                &centered_macro,
+                                parent_bundle.as_ref().map(|pb| pb.1),
+                                9.0,
+                                62.0,
+                            );
+                        }
+
+                        let hovered_macro = paint_3d_molecular_viewport(
                             ui.painter(),
                             vp_rect,
                             &active_cand.mol,
@@ -13784,7 +14045,9 @@ impl SarAtlasGuiApp {
                             self.macro_color_by_esp_3d,
                             self.macro_show_vdw_3d,
                             false,
+                            vp_resp.hover_pos(),
                         );
+                        show_3d_atom_hover_tooltip(vp_resp, hovered_macro);
 
                         ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
@@ -18974,7 +19237,7 @@ impl SarAtlasGuiApp {
                         });
                         let (rect_3d, resp_3d) = ui.allocate_exact_size(
                             Vec2::new(ui.available_width(), 205.0),
-                            Sense::drag(),
+                            Sense::click_and_drag(),
                         );
                         if resp_3d.dragged() {
                             let d = resp_3d.drag_delta();
@@ -18982,7 +19245,19 @@ impl SarAtlasGuiApp {
                             self.denovo_pitch_3d =
                                 (self.denovo_pitch_3d + d.y * 0.012).clamp(-1.45, 1.45);
                         }
-                        paint_3d_molecular_viewport(
+                        if resp_3d.double_clicked() {
+                            self.denovo_yaw_3d = 0.52;
+                            self.denovo_pitch_3d = 0.34;
+                            self.denovo_pan_3d = [0.0, 0.0];
+                            self.denovo_zoom_3d = fit_3d_bounding_zoom(
+                                rect_3d,
+                                &rep.query_coords3d,
+                                Some(cand.aligned_coords3d.as_slice()),
+                                9.0,
+                                62.0,
+                            );
+                        }
+                        let hovered_dn = paint_3d_molecular_viewport(
                             ui.painter(),
                             rect_3d,
                             &rep.query_mol,
@@ -19002,7 +19277,9 @@ impl SarAtlasGuiApp {
                             self.denovo_color_esp_3d,
                             true,
                             self.denovo_show_rocs_colors,
+                            resp_3d.hover_pos(),
                         );
+                        show_3d_atom_hover_tooltip(resp_3d, hovered_dn);
                         ui.monospace(format!(
                             "Combo {:.3} (Shape {:.3} | Color {:.3} | ESP {:.2})",
                             cand.rocs_combo_tanimoto,
@@ -29635,5 +29912,65 @@ mod tests {
         step_key(&mut app, egui::Key::Escape);
         assert!(!app.about_open);
         assert!(!app.zen_canvas_mode);
+    }
+
+    #[test]
+    fn headless_chemspace_idle_repaint_gating_fallback_and_3d_bounding_zoom() {
+        let ds = DatasetAnalysis::from_molecules(load_benchmark_26(), 0.30, 6.0);
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut app = SarAtlasApp::new(&cc, ds);
+
+        assert!(!app.wgpu_ready);
+        app.active_tab = WorkbenchTab::SaliViewport;
+        let mut t = 0.0f64;
+        let mut run_frame = |app: &mut SarAtlasApp| {
+            t += 1.0 / 60.0;
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                time: Some(t),
+                ..Default::default()
+            };
+            ctx.run(raw, |c| app.draw_ui(c))
+        };
+
+        // Run past initial egui sizing/autofit settle frames; subsequent idle frames must not spin
+        let mut out_idle = run_frame(&mut app);
+        for _ in 0..5 {
+            out_idle = run_frame(&mut app);
+        }
+        assert!(
+            out_idle
+                .viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .map_or(true, |vo| vo.repaint_delay > std::time::Duration::ZERO),
+            "Idle Chem-Space frame must not schedule zero-delay continuous repaint"
+        );
+        assert!(!should_request_chemspace_repaint(false, false, false, false));
+        assert!(should_request_chemspace_repaint(true, false, false, false));
+        assert!(should_request_chemspace_repaint(false, true, false, false));
+
+        // Verify scalar heatmap helper produces bounded 256x256 scalar height + RGBA buffers
+        let (rgba, scalar) = build_chem_heatmap_rgba_and_scalar(
+            &app.ds.mols,
+            &app.ds.chem_coords,
+            &app.ds.profiles,
+            &app.ds.edges,
+            &app.visible_mask,
+            app.heatmap_layer,
+        );
+        assert_eq!(rgba.len(), sar_core::HEATMAP_DIM * sar_core::HEATMAP_DIM * 4);
+        assert_eq!(scalar.len(), sar_core::HEATMAP_DIM * sar_core::HEATMAP_DIM);
+        assert!(scalar.iter().any(|&v| v > 0));
+
+        // Verify dynamic bounding-sphere zoom adapts cleanly for PROTAC-sized coordinates
+        let vp = Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 345.0));
+        let zoom_small = fit_3d_bounding_zoom(vp, &[[3.0, 0.0, 0.0]], None, 6.0, 68.0);
+        let zoom_protac = fit_3d_bounding_zoom(vp, &[[22.0, 4.0, 3.0]], None, 6.0, 68.0);
+        assert!(zoom_protac < zoom_small);
+        assert_eq!(app.conf3d_trial_count, app.conf3d_pending_trial_count);
     }
 }
