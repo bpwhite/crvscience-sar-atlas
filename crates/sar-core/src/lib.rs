@@ -22,6 +22,8 @@
 //! combinatorial `BRICS` virtual hybrids, McGregor/`VF2` `MCS` 2D series alignment, and
 //! physiological `pH 7.4` micro-`pKa`/protomers, Distance-Geometry 3D conformers + `MMFF-lite` + `USR`/`ROCS` 3D overlay, covalent warhead `GSH` tuning, `PROTAC` `bRo5` chameleonicity, `SMARTCyp` Phase I/II metabolism, `RCM`/lactam macrocyclization with 3D preorganization entropy, `Rule-of-3` fragment exit-vector growing with `GE`/`LLE`/`LE` optimization, bioreversible prodrug promoiety enumeration (`ester`, `phosphate`, `carbamate`, `oxazolidinone`, `PEPT1`), and physiologically based oral absorption (`CAT`/`ACAT`), hepatic first-pass (`Fg * Fh`), `Rodgers-Rowland` `Vss`, and unbound brain `Kp,uu,brain` `RK4` pharmacokinetic simulation and cross-module `Derringer-Suich` lead scorecards + standalone `.html`/`.svg` dossiers and evolutionary graph-mutation / ring-hop / `BRICS` crossover de novo molecule generation and structure-based `.pdb` binding-site cavity, `WaterMap` hydration & receptor pharmacophore complementarity scoring and DNA-encoded (`DEL`) / parallel 2- and 3-step `Amide`, `Suzuki`, `Buchwald`, & `CuAAC Click` combinatorial library enumeration with `MaxMin` diversity and 3D `PDB Pocket` / `ROCS` pre-filtering and dual-pocket target vs off-target 3D cavity, differential `WaterMap`, and residue-mutation `Delta-Delta G` selectivity profiling and `GNM`/`ANM` normal-mode cryptic pocket detection & allosteric-to-orthosteric mechanical strain coupling and `ECFP4`/`3D-USRCAT` Gaussian-process + `24`-tree ensemble active-learning QSAR with Expected-Improvement & Kriging-Believer batch acquisition and `Lomap` `MCS` perturbation-graph planning, multi-`lambda` `Zwanzig`/`Bennett BAR` congeneric `RBFE` estimation, and `MLE` cycle-closure hysteresis reconciliation and hierarchical `CSD`/`SMARTS` dihedral energy-profile scanning, `Shoichet` `TEU` bioactive 3D conformer strain estimation, and rotatable-bond locking and configurable 6-stage molecule discovery funnel orchestration (`DeNovo`/`DEL`/`Rotor-Lock` -> `PAINS`/`ADMET`/`SAScore` -> `3D Pocket` & `Shoichet TEU` -> `Selectivity` -> `Active-Learning QSAR` -> `Lomap RBFE` & workspace promotion, and sub-pocket fragment-pair 3D exit-vector alignment, `18`-scaffold linker geometry matching, and `Jencks`/`Murray-Verdonk` super-additivity `Delta-G` scoring, and flexible binding-pocket `Dunbrack` side-chain rotamer repacking & `Fischer-Shoichet` Boltzmann receptor-ensemble docking, and active-site `His`/`Asp`/`Glu` coupled tautomer/protonation, `Asn`/`Gln`/`His` `180 deg` flip, and tetrahedral `H-O-H` bridge-water hydrogen-bond network optimization, and `IFST`/`WaterMap`/`GIST` `dH`/`-TdS`/`dG` active-site hydration hotspot mapping & displaceable-water R-group vector design, and `Foldit`/`Drugit`-style interactive 3D tactile ligand/side-chain force-field sculpting, rubber-band H-bond restraints, & timed med-chem challenge puzzles, and live public `RCSB PDB` & `AlphaFold DB` coordinate, ligand, per-residue `pLDDT`/`PAE` confidence & `Karelina-Dror` pocket readiness analysis, and 3D `Bauer-Mackey` molecular electrostatic potential (`ESP`) complementarity, `XED` off-center `sigma-hole` halogen/chalcogen bonds, & `Wheeler-Houk` `pi`-multipole recognition, `v3.8.0`).
 
+#![forbid(unsafe_code)]
+
 pub mod active_learning;
 pub mod admet;
 pub mod alerts;
@@ -51,6 +53,7 @@ pub mod mmp;
 pub mod mol;
 pub mod mol_io;
 pub mod parallel_lib;
+pub mod pareto_frontier;
 pub mod pbpk_oral;
 pub mod pharmacophore;
 pub mod physchem;
@@ -246,6 +249,10 @@ pub use parallel_lib::{
     BuildingBlockClass, BuildingBlockReagent, CuratedLibraryScheme, EnumeratedLibraryMember,
     LibraryPreFilterMode, LibrarySynthesisMode, ParallelLibConfig, ParallelLibraryReport,
     ParallelReactionKind, CURATED_LIBRARY_SCHEMES,
+};
+pub use pareto_frontier::{
+    compute_admet_composite_score, export_pareto_frontier_csv, export_pareto_frontier_json,
+    rank_pareto_frontier, ParetoFrontierReport, ParetoLeadEntry, ParetoObjectiveProfile,
 };
 pub use pharmacophore::{
     align_pharmacophores, compute_topological_distances, extract_pharmacophore_map,

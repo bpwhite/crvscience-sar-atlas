@@ -98,7 +98,9 @@ use sar_core::{
     score_ligand_dual_selectivity, screen_dataset_selectivity, DualPocketComparison, DualPocketLigandResult,
     ResidueMutationScan, CURATED_SELECTIVITY_PAIRS, enumerate_parallel_library, export_parallel_library_csv,
     format_parallel_library_sdf, EnumeratedLibraryMember, LibraryPreFilterMode, LibrarySynthesisMode,
-    ParallelLibConfig, ParallelLibraryReport, CURATED_LIBRARY_SCHEMES, analyze_binding_pocket,
+    ParallelLibConfig, ParallelLibraryReport, CURATED_LIBRARY_SCHEMES,
+    export_pareto_frontier_csv, export_pareto_frontier_json, rank_pareto_frontier,
+    ParetoFrontierReport, ParetoObjectiveProfile, analyze_binding_pocket,
     curated_pocket_pdb_text, export_pocket_complementarity_csv, fetch_rcsb_pdb_text, format_pocket_poses_sdf,
     parse_pdb_structure, score_ligand_in_pocket, screen_dataset_against_pocket, PocketCavityAnalysis,
     PocketComplementarityResult, CURATED_PDB_POCKETS, evolve_de_novo_molecules, export_de_novo_candidates_csv,
@@ -897,6 +899,11 @@ pub struct SarAtlasGuiApp {
     dossier_export_svg_buf: String,
     dossier_export_camp_html_buf: String,
     dossier_export_csv_buf: String,
+    pareto_profile: ParetoObjectiveProfile,
+    pareto_cached_key: String,
+    pareto_report: Option<ParetoFrontierReport>,
+    pareto_export_json_buf: String,
+    pareto_export_csv_buf: String,
 
     // Evolutionary De Novo Molecule Generator (GB-GA + Ring-Hop + BRICS Crossover) state
     denovo_use_sketcher_seed: bool,
@@ -1466,6 +1473,11 @@ impl SarAtlasGuiApp {
             dossier_export_svg_buf: "lead_scorecard_poster_v210.svg".to_string(),
             dossier_export_camp_html_buf: "campaign_portfolio_dossiers_v210.html".to_string(),
             dossier_export_csv_buf: "campaign_lead_scorecard_v210.csv".to_string(),
+            pareto_profile: ParetoObjectiveProfile::BalancedAdmet,
+            pareto_cached_key: String::new(),
+            pareto_report: None,
+            pareto_export_json_buf: "pareto_frontier_rank.json".to_string(),
+            pareto_export_csv_buf: "pareto_frontier_rank.csv".to_string(),
             denovo_use_sketcher_seed: false,
             denovo_promoted_seed: None,
             denovo_cfg: DeNovoConfig::default(),
@@ -14674,9 +14686,13 @@ impl SarAtlasGuiApp {
                 (self.ds.mols[sel_idx].clone(), self.frag_deconstruct_to_ro3)
             }
             2 if !self.sketcher.mol.atoms.is_empty() => (self.sketcher.mol.clone(), false),
-            3 if self.frag_promoted_seed.is_some() => {
-                (self.frag_promoted_seed.clone().unwrap(), false)
-            }
+            3 => match self.frag_promoted_seed.clone() {
+                Some(seed) => (seed, false),
+                None => (
+                    build_curated_ro3_seed_molecule(self.frag_curated_seed_idx),
+                    false,
+                ),
+            },
             _ => (
                 build_curated_ro3_seed_molecule(self.frag_curated_seed_idx),
                 false,
@@ -18908,11 +18924,139 @@ impl SarAtlasGuiApp {
                                             .strong()
                                             .monospace(),
                                         );
-                                        ui.end_row();
+                                            ui.end_row();
                                     }
                                 });
                         });
                 });
+
+                ui.add_space(8.0);
+
+                let pareto_key = format!(
+                    "{}|{}|{:?}",
+                    self.target_filter,
+                    camp_ds.mols.len(),
+                    self.pareto_profile
+                );
+                if self.pareto_cached_key != pareto_key || self.pareto_report.is_none() {
+                    self.pareto_report = Some(rank_pareto_frontier(&camp_ds, self.pareto_profile));
+                    self.pareto_cached_key = pareto_key;
+                }
+                if let Some(ref pareto_rep) = self.pareto_report {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "4. Multi-Objective Pareto Frontier Ranker (Front-1: {} / {} | {} Shells | 3D HV={:.4})",
+                                    pareto_rep.frontier_count,
+                                    pareto_rep.total_compounds,
+                                    pareto_rep.front_layers,
+                                    pareto_rep.hypervolume_3d
+                                ))
+                                .strong()
+                                .color(Color32::from_rgb(52, 211, 153)),
+                            );
+                            ui.separator();
+                            for pp in ParetoObjectiveProfile::ALL {
+                                if ui
+                                    .selectable_label(self.pareto_profile == pp, pp.code())
+                                    .on_hover_text(pp.label())
+                                    .clicked()
+                                {
+                                    self.pareto_profile = pp;
+                                }
+                            }
+                            ui.separator();
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.pareto_export_json_buf)
+                                    .desired_width(145.0),
+                            );
+                            if ui.small_button("Export Pareto JSON").clicked() {
+                                let out = self.pareto_export_json_buf.trim().to_string();
+                                match std::fs::write(&out, export_pareto_frontier_json(pareto_rep)) {
+                                    Ok(_) => {
+                                        self.status_banner =
+                                            format!("Exported Pareto frontier JSON -> {out}");
+                                    }
+                                    Err(e) => self.status_banner = format!("Pareto JSON error: {e}"),
+                                }
+                            }
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.pareto_export_csv_buf)
+                                    .desired_width(145.0),
+                            );
+                            if ui.small_button("Export Pareto CSV").clicked() {
+                                let out = self.pareto_export_csv_buf.trim().to_string();
+                                match std::fs::write(&out, export_pareto_frontier_csv(pareto_rep)) {
+                                    Ok(_) => {
+                                        self.status_banner =
+                                            format!("Exported Pareto frontier CSV -> {out}");
+                                    }
+                                    Err(e) => self.status_banner = format!("Pareto CSV error: {e}"),
+                                }
+                            }
+                        });
+
+                        egui::ScrollArea::horizontal()
+                            .id_salt("dossier_pareto_hscroll")
+                            .show(ui, |ui| {
+                                egui::Grid::new("dossier_pareto_frontier_grid")
+                                    .num_columns(9)
+                                    .striped(true)
+                                    .spacing([12.0, 4.0])
+                                    .show(ui, |ui| {
+                                        ui.strong("Front");
+                                        ui.strong("Compound");
+                                        ui.strong("pAct");
+                                        ui.strong("QED");
+                                        ui.strong("ADMET");
+                                        ui.strong("CNS-MPO");
+                                        ui.strong("LLE");
+                                        ui.strong("Crowding");
+                                        ui.strong("Dominates / DomBy");
+                                        ui.end_row();
+
+                                        for e in pareto_rep.entries.iter().take(25) {
+                                            let front_col = if e.pareto_rank == 1 {
+                                                Color32::from_rgb(52, 211, 153)
+                                            } else if e.pareto_rank == 2 {
+                                                Color32::from_rgb(56, 189, 248)
+                                            } else {
+                                                Color32::from_rgb(148, 163, 184)
+                                            };
+                                            let crowd_s = if e.crowding_distance.is_finite() {
+                                                format!("{:.3}", e.crowding_distance)
+                                            } else {
+                                                "INF".to_string()
+                                            };
+                                            ui.colored_label(
+                                                front_col,
+                                                RichText::new(format!("F{}", e.pareto_rank))
+                                                    .strong()
+                                                    .monospace(),
+                                            );
+                                            if ui
+                                                .selectable_label(false, format!("{} ({})", e.name, e.id))
+                                                .clicked()
+                                            {
+                                                pick_mol_idx = Some((e.id.clone(), e.mol_idx));
+                                            }
+                                            ui.monospace(format!("{:.2}", e.pact));
+                                            ui.monospace(format!("{:.3}", e.qed));
+                                            ui.monospace(format!("{:.3}", e.admet_composite_score));
+                                            ui.monospace(format!("{:.2}", e.cns_mpo));
+                                            ui.monospace(format!("{:.2}", e.lle));
+                                            ui.monospace(crowd_s);
+                                            ui.monospace(format!(
+                                                "{} / {}",
+                                                e.dominates_count, e.dominated_by_count
+                                            ));
+                                            ui.end_row();
+                                        }
+                                    });
+                            });
+                    });
+                }
             });
 
         if let Some((id, mi)) = pick_mol_idx {

@@ -370,9 +370,11 @@ fn mapping_to_consensus_smarts(
     let mut rtags: Vec<Vec<(u16, &'static str)>> = vec![Vec::new(); n];
     for (ri, &(u, nb, bi)) in back_edges.iter().enumerate() {
         let rnum = (ri + 1) as u16;
-        let bt = bond_tok(bi, map_lookup[u].unwrap(), map_lookup[nb].unwrap());
-        rtags[u].push((rnum, bt));
-        rtags[nb].push((rnum, ""));
+        if let (Some(va), Some(vb)) = (map_lookup[u], map_lookup[nb]) {
+            let bt = bond_tok(bi, va, vb);
+            rtags[u].push((rnum, bt));
+            rtags[nb].push((rnum, ""));
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -387,10 +389,13 @@ fn mapping_to_consensus_smarts(
         bond_tok: &dyn Fn(usize, usize, usize) -> &'static str,
         out: &mut String,
     ) {
-        let v = map_lookup[u].unwrap();
+        let Some(v) = map_lookup[u] else {
+            return;
+        };
         if let Some((par_u, bi)) = in_edge {
-            let par_v = map_lookup[par_u].unwrap();
-            out.push_str(bond_tok(bi, par_v, v));
+            if let Some(par_v) = map_lookup[par_u] {
+                out.push_str(bond_tok(bi, par_v, v));
+            }
         }
         let aa = &mol_a.atoms[u];
         let ab = &mol_b.atoms[v];

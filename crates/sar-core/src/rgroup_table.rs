@@ -1026,25 +1026,27 @@ fn extract_substituents_for_embedding(
 
         let distinct_q: BTreeSet<usize> = attached_q.iter().map(|&(qi, _)| qi).collect();
         if distinct_q.len() == 1 {
-            let &(qi, r_root) = attached_q.iter().next().unwrap();
-            let bond_prefix = mol
-                .bond_between(core_map[qi], r_root)
-                .map(|bi| match mol.bonds[bi].kekule_order {
-                    3 => "#",
-                    2 => "=",
-                    _ => "-",
-                })
-                .unwrap_or("-");
-            let r_str = format_substituent_shorthand(mol, &comp_mask, r_root, bond_prefix);
-            per_q_parts[qi].push(r_str);
+            if let Some(&(qi, r_root)) = attached_q.iter().next() {
+                let bond_prefix = mol
+                    .bond_between(core_map[qi], r_root)
+                    .map(|bi| match mol.bonds[bi].kekule_order {
+                        3 => "#",
+                        2 => "=",
+                        _ => "-",
+                    })
+                    .unwrap_or("-");
+                let r_str = format_substituent_shorthand(mol, &comp_mask, r_root, bond_prefix);
+                per_q_parts[qi].push(r_str);
+            }
         } else if distinct_q.len() >= 2 {
-            let anchor_qi = *distinct_q.iter().next().unwrap();
-            let bridge_lbl = format!(
-                "bridge:[{}#{:03x}]",
-                sub_formula(mol, &comp_mask),
-                wl_subgraph_hash(mol, &comp_mask, false) & 0xfff
-            );
-            per_q_parts[anchor_qi].push(bridge_lbl);
+            if let Some(&anchor_qi) = distinct_q.iter().next() {
+                let bridge_lbl = format!(
+                    "bridge:[{}#{:03x}]",
+                    sub_formula(mol, &comp_mask),
+                    wl_subgraph_hash(mol, &comp_mask, false) & 0xfff
+                );
+                per_q_parts[anchor_qi].push(bridge_lbl);
+            }
         }
     }
 

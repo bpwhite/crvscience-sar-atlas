@@ -845,14 +845,16 @@ fn build_search_plans(atoms: &[AtomExpr], adj: &[Vec<(usize, usize)>]) -> Vec<Ve
         });
 
         while steps.len() < comp.len() {
-            let next_q = *comp
+            let Some(&next_q) = comp
                 .iter()
                 .filter(|&&u| !in_plan[u])
                 .max_by_key(|&&u| {
                     let already_nbrs = adj[u].iter().filter(|&&(v, _)| in_plan[v]).count();
                     already_nbrs * 1000 + specificity_score(&atoms[u]) * 16 + adj[u].len() * 8
                 })
-                .unwrap();
+            else {
+                break;
+            };
 
             let constraints: Vec<(usize, usize)> = adj[next_q]
                 .iter()

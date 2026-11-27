@@ -24,12 +24,14 @@
 //! `PROTAC` (`CRBN`/`VHL`) `bRo5` chameleonicity, `ChEMBL`/`PubChem` REST, `SQLite 3`, and `MCS`.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![deny(unsafe_code)]
 
 mod gui;
 mod tui;
 mod wgpu_pass;
 
 #[cfg(windows)]
+#[allow(unsafe_code)]
 fn attach_parent_console_if_cli() {
     if std::env::args_os().len() > 1 {
         const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
@@ -74,6 +76,8 @@ use sar_core::{
     scan_pocket_residue_mutations, score_ligand_dual_selectivity, screen_dataset_selectivity,
     CURATED_SELECTIVITY_PAIRS, enumerate_parallel_library, export_parallel_library_csv, format_parallel_library_sdf,
     LibraryPreFilterMode, LibrarySynthesisMode, ParallelLibConfig, CURATED_LIBRARY_SCHEMES,
+    export_pareto_frontier_csv, export_pareto_frontier_json, rank_pareto_frontier,
+    ParetoObjectiveProfile,
     analyze_binding_pocket, curated_pocket_pdb_text, export_pocket_complementarity_csv, fetch_rcsb_pdb_text,
     format_pocket_poses_sdf, parse_pdb_structure, score_ligand_in_pocket, screen_dataset_against_pocket,
     CURATED_PDB_POCKETS, evolve_de_novo_molecules, export_de_novo_candidates_csv, format_de_novo_3d_sdf,
@@ -1256,6 +1260,24 @@ enum Commands {
         output: PathBuf,
         #[arg(long, default_value_t = false)]
         pareto_only: bool,
+    },
+    /// Rank compounds by NSGA-II multi-objective Pareto non-dominated sorting (`pAct` / `QED` / `ADMET`) and export `.json` / `.csv` frontier tables.
+    Pareto {
+        /// Optional dataset `.smi`, `.csv`, `.sdf`, `.sqlite`, or `.saratlas.json`.
+        #[arg(short, long)]
+        input: Option<PathBuf>,
+        /// Multi-objective profile (`balanced-admet`, `cns-mpo`, or `potency-lle`).
+        #[arg(long, default_value = "balanced-admet")]
+        profile: String,
+        /// Print/export only Rank-1 non-dominated Pareto frontier compounds.
+        #[arg(long, default_value_t = false)]
+        frontier_only: bool,
+        /// Optional RFC 8259 `.json` output path for the ranked Pareto frontier.
+        #[arg(long)]
+        export_json: Option<PathBuf>,
+        /// Optional RFC 4180 `.csv` output path for the ranked Pareto frontier.
+        #[arg(long)]
+        export_csv: Option<PathBuf>,
     },
     /// Run multi-core `Rayon` `ECFP4` + `Pharmacophore` + `SAScore/BRICS` + `ADMET` + `Pod` GPU benchmark.
     Bench {
@@ -3129,7 +3151,10 @@ Co-Crystallized Ligands Extracted:");
             };
 
             let focus_mol = if let Some(ref smi) = smiles {
-                let mut m = sar_core::parse_smiles(smi).unwrap();
+                let mut m = sar_core::parse_smiles(smi).unwrap_or_else(|e| {
+                    eprintln!("SMILES parse error: {e}");
+                    std::process::exit(1);
+                });
                 m.id = "QUERY".to_string();
                 m.name = "Query_Ligand".to_string();
                 m
@@ -6008,7 +6033,10 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                             || m.name.eq_ignore_ascii_case(target_id)
                     })
                     .unwrap_or_else(|| {
-                        parse_smiles("CCOc1cc2ncnc(Nc3cccc(Br)c3)c2cc1OCC").unwrap()
+                        parse_smiles("CCOc1cc2ncnc(Nc3cccc(Br)c3)c2cc1OCC").unwrap_or_else(|e| {
+                            eprintln!("Fallback SMILES parse error: {e}");
+                            std::process::exit(1);
+                        })
                     })
             };
             let alerts = sar_core::scan_structural_alerts(&mol);
@@ -6041,6 +6069,63 @@ Residue-Mutation ddG Scan on {} ({} in {} | Robustness {:.0}/100):",
                 .map(|i| ds.mols[i].clone())
                 .collect();
             std::fs::write(&output, format_sdf_dataset(&selected)).expect("Failed to write SDF");
+        }
+        Commands::Pareto {
+            input,
+            profile,
+            frontier_only,
+            export_json,
+            export_csv,
+        } => {
+            let t0 = Instant::now();
+            let ds = load_dataset_or_project(input.as_ref(), 0.30, 6.0);
+            let prof_enum = ParetoObjectiveProfile::from_code(&profile);
+            let mut report = rank_pareto_frontier(&ds, prof_enum);
+            if frontier_only {
+                report.entries.retain(|e| e.pareto_rank == 1);
+            }
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            println!(
+                "=== SAR-Atlas Multi-Objective Pareto Frontier ({} compounds | Rank-1 Frontier={} | {} shells | HV_3D={:.4} | {:.2} ms) ===",
+                report.total_compounds,
+                report.frontier_count,
+                report.front_layers,
+                report.hypervolume_3d,
+                ms
+            );
+            println!(
+                "{:<6} {:<12} {:<20} {:>6} {:>6} {:>7} {:>8} {:>9} {:>5}",
+                "FRONT", "ID", "NAME", "pAct", "QED", "ADMET", "CROWD", "DOMINATES", "PAINS"
+            );
+            for e in report.entries.iter().take(25) {
+                let crowd = if e.crowding_distance.is_finite() {
+                    format!("{:.3}", e.crowding_distance)
+                } else {
+                    "INF".to_string()
+                };
+                println!(
+                    "F{:<5} {:<12} {:<20} {:>6.2} {:>6.3} {:>7.3} {:>8} {:>9} {:>5}",
+                    e.pareto_rank,
+                    e.id,
+                    e.name,
+                    e.pact,
+                    e.qed,
+                    e.admet_composite_score,
+                    crowd,
+                    e.dominates_count,
+                    e.pains_alerts
+                );
+            }
+            if let Some(ref jp) = export_json {
+                std::fs::write(jp, export_pareto_frontier_json(&report))
+                    .expect("Failed to write Pareto JSON");
+                println!("Wrote Pareto frontier JSON -> {}", jp.display());
+            }
+            if let Some(ref cp) = export_csv {
+                std::fs::write(cp, export_pareto_frontier_csv(&report))
+                    .expect("Failed to write Pareto CSV");
+                println!("Wrote Pareto frontier CSV -> {}", cp.display());
+            }
         }
         Commands::Bench { compounds } => {
             let n = compounds.max(100);

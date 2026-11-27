@@ -1331,9 +1331,9 @@ pub fn analyze_pka_and_protomers(mol: &Molecule, target_ph: f64) -> PkaProtomerR
     let has_acid = sites.iter().any(|s| s.kind == IonSiteKind::Acidic);
     let has_base = sites.iter().any(|s| s.kind == IonSiteKind::Basic);
     let mut isoelectric_pi = None;
-    if has_acid && has_base {
+    if has_acid && has_base && !mean_charge_curve.is_empty() {
         let q0 = mean_charge_curve[0] as f64;
-        let q14 = *mean_charge_curve.last().unwrap() as f64;
+        let q14 = mean_charge_curve.last().copied().unwrap_or(0.0) as f64;
         if q0 > 0.05 && q14 < -0.05 {
             let mut lo = 0.0f64;
             let mut hi = 14.0f64;
