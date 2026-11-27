@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Standalone 5-domain wgpu/egui desktop workbench, native ANSI terminal console, and Clap CLI for SAR-Atlas small-molecule cheminformatics."
+homepage.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "sar-atlas"

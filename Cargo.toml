@@ -10,6 +10,8 @@ version = "3.8.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Bryan P. White <bryan@crvscience.com>"]
+homepage = "https://crvscience.com/apps"
+repository = "https://github.com/bpwhite/crvscience-sar-atlas"
 
 [workspace.dependencies]
 sar-core = { path = "crates/sar-core" }

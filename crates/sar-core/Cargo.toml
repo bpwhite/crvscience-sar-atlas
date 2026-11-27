@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Pure-Rust small-molecule cheminformatics engine: OpenSMILES/V2000 SDF I/O, ChEMBL/PubChem REST ingestion, JSON/SQLite workspace persistence, 2D sketcher, ADMET, bioisosteres, SMARTS, Free-Wilson SAR, and ECFP4/SALI cliffs."
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde.workspace = true
